@@ -88,7 +88,7 @@ if [ ! -d "${MODEL_INSTALL_DIR}" ]; then
   echo "Downloading model to ${MODEL_INSTALL_DIR} ..."
   mkdir -p "${MODEL_INSTALL_DIR}"
   uv tool run --with hf_transfer hf download \
-    --cache-dir "${MODEL_INSTALL_DIR}" \
+    --cache-dir "${MODEL_DIR}" \
     --repo-type model \
     --max-workers 16 \
     "${MODEL_TAG}"

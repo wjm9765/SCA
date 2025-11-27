@@ -77,7 +77,7 @@ ln -s "$LOCAL_VENV_DIR" "${SCRIPT_DIR}/.venv"
 
 echo "Running: uv sync $UV_EXTRA"
 cd "$SCRIPT_DIR" || exit 1
-uv sync $UV_EXTRA --frozen --locked
+uv sync $UV_EXTRA --frozen
 
 if [ ! -d "${MODEL_INSTALL_DIR}" ]; then
   echo "Downloading model to ${MODEL_INSTALL_DIR} ..."

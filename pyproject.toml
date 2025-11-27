@@ -8,6 +8,7 @@ dependencies = [
     "accelerate>=1.12.0",
     "numpy>=2.3.5",
     "qwen-omni-utils>=0.0.8",
+    "sca-data",
     "torch>=2.9.1",
     "torchaudio>=2.9.1",
     "torchcodec>=0.8.1",
@@ -43,6 +44,7 @@ torchvision = [
     { index = "pytorch-cu128", extra = "cu128" },
     { index = "pytorch-cu130", extra = "cu130" },
 ]
+sca-data = { git = "https://github.com/riverfog7/sca_data_prep.git", rev = "main" }
 
 [[tool.uv.index]]
 name = "pytorch-cpu"

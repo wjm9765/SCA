@@ -2,7 +2,7 @@ import importlib
 import typing
 
 if typing.TYPE_CHECKING:
-    from . import models
+    from . import data_collator, utils, config
 
 
 def __getattr__(name: str):

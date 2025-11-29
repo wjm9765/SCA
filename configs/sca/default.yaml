@@ -1,0 +1,36 @@
+hf_home: "./.hf_models"
+dataset_cache_dir: "./.hf_datasets"
+model_id: "Qwen/Qwen3-Omni-30B-A3B-Instruct"
+train_output_dir: "./SCA_finetune"
+verbose: 4
+
+gradient_checkpointing: true
+attn_impl: "flash_attention_2"
+max_length: 65536
+mask_instruction: true
+
+lora_config:
+  use_qlora: true
+  r: 64
+  lora_alpha: 128
+  target_modules_regex: "^thinker\\.model\\.layers\\.\\d+\\..*(q|k|v|o)_proj$"
+  lora_dropout: 0.05
+  lora_bias: "none"
+  task_type: "CAUSAL_LM"
+
+training_args:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16
+  warmup_ratio: 0.03
+  num_train_epochs: 3
+  max_steps: -1
+  learning_rate: 0.0001
+  fp16: false
+  bf16: true
+  logging_steps: 5
+  save_steps: 50
+  optim: "paged_adamw_8bit"
+  remove_unused_columns: false
+  ddp_find_unused_parameters: false
+  report_to:
+    - "wandb"

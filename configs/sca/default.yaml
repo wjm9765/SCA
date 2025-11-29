@@ -27,7 +27,7 @@ training_args:
   learning_rate: 0.0001
   fp16: false
   bf16: true
-  logging_steps: 5
+  logging_steps: 1
   save_steps: 50
   optim: "paged_adamw_8bit"
   remove_unused_columns: false

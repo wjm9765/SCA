@@ -12,6 +12,9 @@ fsdp_config:
   fsdp_state_dict_type: SHARDED_STATE_DICT
   fsdp_transformer_layer_cls_to_wrap: Qwen3OmniMoeThinkerTextDecoderLayer
   fsdp_version: 2
+  # for FSDP
+  fsdp_use_orig_params: true
+  fsdp_sharding_strategy: FULL_SHARD
 machine_rank: 0
 main_training_function: main
 mixed_precision: bf16

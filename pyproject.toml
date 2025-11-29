@@ -27,9 +27,24 @@ dependencies = [
 
 [project.optional-dependencies]
 cpu = ["torch==2.9.1", "torchaudio==2.9.1", "torchvision==0.24.1"]
-cu126 = ["torch==2.9.1", "torchaudio==2.9.1", "torchvision>=0.24.1"]
-cu128 = ["torch==2.9.1", "torchaudio==2.9.1", "torchvision>=0.24.1"]
-cu130 = ["torch==2.9.1", "torchaudio==2.9.1", "torchvision>=0.24.1"]
+cu126 = [
+    "torch==2.9.1",
+    "torchaudio==2.9.1",
+    "torchvision>=0.24.1",
+    "flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.5.4/flash_attn-2.8.3+cu126torch2.9-cp312-cp312-linux_x86_64.whl",
+]
+cu128 = [
+    "torch==2.9.1",
+    "torchaudio==2.9.1",
+    "torchvision>=0.24.1",
+    "flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.5.4/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl",
+]
+cu130 = [
+    "torch==2.9.1",
+    "torchaudio==2.9.1",
+    "torchvision>=0.24.1",
+    "flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.5.4/flash_attn-2.8.3+cu130torch2.9-cp312-cp312-linux_x86_64.whl",
+]
 
 [tool.uv]
 conflicts = [[{ extra = "cpu" }, { extra = "cu126" }, { extra = "cu128" }, { extra = "cu130" }]]

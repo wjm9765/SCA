@@ -4,7 +4,7 @@ model_id: "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 train_output_dir: "./SCA_finetune"
 verbose: 4
 
-gradient_checkpointing: true
+gradient_checkpointing: false # Turn off when using FSDP
 attn_impl: "flash_attention_2"
 max_length: 65536
 mask_instruction: true

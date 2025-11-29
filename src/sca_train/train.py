@@ -1,6 +1,7 @@
 import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
+import gc
 import torch
 from peft import LoraConfig, get_peft_model
 from transformers import (
@@ -25,9 +26,9 @@ def train(config: SCATrainingConfig):
     local_rank = get_local_rank()
 
     logger.debug(config, f"Detected FSDP mode as: {is_fsdp()} at local rank {local_rank}", rank0_only=False)
-    torch.cuda.set_device(local_rank)
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(local_rank)
     if is_fsdp():
-        device_map = {"": local_rank}
+        device_map = None
         if config.gradient_checkpointing:
             config.gradient_checkpointing = False
             logger.debug(config, "FSDP detected: Overriding config.gradient_checkpointing to False (Managed by FSDP Config)")
@@ -126,6 +127,10 @@ def train(config: SCATrainingConfig):
     model = get_peft_model(model, peft_config)
     if get_local_rank() == 0 and config.verbose >= config.verbose.INFO:
         model.print_trainable_parameters()
+
+    logger.debug(config, "Cleaning up memory")
+    gc.collect()
+    torch.cuda.empty_cache()
 
     training_args = config.training_args
     args = TrainingArguments(

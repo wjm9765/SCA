@@ -11,7 +11,6 @@ from transformers import (
     Qwen3OmniMoeConfig,
     TrainingArguments,
     BitsAndBytesConfig,
-    Trainer,
 )
 
 from sca_data.dataset_utils import easy_load
@@ -19,6 +18,7 @@ from sca_data.dataset_utils import easy_load
 from .data_collator import Qwen3OmniCollator
 from . import logger
 from .config import SCATrainingConfig
+from .trainer import QwenTrainer
 from .utils import is_fsdp, prepare_model_for_kbit_training, get_local_rank
 from .config.loader import load_config
 
@@ -154,7 +154,7 @@ def train(config: SCATrainingConfig):
     )
     logger.debug(config, f"TrainingArguments: {args}")
 
-    trainer = Trainer(
+    trainer = QwenTrainer(
         model=model,
         args=args,
         train_dataset=train_dataset,

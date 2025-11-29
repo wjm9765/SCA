@@ -6,6 +6,7 @@ from peft import LoraConfig, get_peft_model
 from transformers import (
     Qwen3OmniMoeForConditionalGeneration,
     Qwen3OmniMoeProcessor,
+    Qwen3OmniMoeConfig,
     TrainingArguments,
     BitsAndBytesConfig,
     Trainer,
@@ -67,13 +68,21 @@ def train(config: SCATrainingConfig):
         )
         logger.debug(config, f"BitsAndBytesConfig: {bnb_config}")
 
+    model_config = Qwen3OmniMoeConfig.from_pretrained(
+        config.model_id,
+        trust_remote_code=True,
+        cache_dir=config.hf_home if config.hf_home else None,
+    )
+    model_config.torch_dtype = torch.bfloat16
+    logger.debug(config, f"Model Config: {model_config}")
+
     model = Qwen3OmniMoeForConditionalGeneration.from_pretrained(
         config.model_id,
+        config=model_config,
         quantization_config=bnb_config,
         device_map=device_map,
         trust_remote_code=True,
         attn_implementation=config.attn_impl,
-        dtype=torch.bfloat16,
         cache_dir=config.hf_home if config.hf_home else None,
     )
     logger.debug(config, f"Finished loading model at local rank {local_rank}", rank0_only=False)

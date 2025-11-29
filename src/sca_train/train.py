@@ -1,5 +1,6 @@
 import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import gc
 import torch
@@ -26,7 +27,7 @@ def train(config: SCATrainingConfig):
     local_rank = get_local_rank()
 
     logger.debug(config, f"Detected FSDP mode as: {is_fsdp()} at local rank {local_rank}", rank0_only=False)
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(local_rank)
+    torch.cuda.set_device(local_rank)
     if is_fsdp():
         device_map = None
         if config.gradient_checkpointing:

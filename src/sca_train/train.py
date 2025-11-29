@@ -17,6 +17,7 @@ from .data_collator import Qwen3OmniCollator
 import logger
 from .config import SCATrainingConfig
 from .utils import is_fsdp, prepare_model_for_kbit_training, get_local_rank
+from .config.loader import load_config
 
 
 def train(config: SCATrainingConfig):
@@ -147,3 +148,28 @@ def train(config: SCATrainingConfig):
     logger.info(config, f"Saving trained model to {config.train_output_dir.as_posix()}")
     trainer.save_model(config.train_output_dir.as_posix())
     logger.info(config, f"Training completed")
+
+
+def main():
+    import argparse
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description="SCA Training Script")
+    parser.add_argument(
+        "--config_file", "--config-file",
+        type=str,
+        required=True,
+        help="Path to the training configuration file (JSON or YAML format)",
+    )
+    args = parser.parse_args()
+
+    config_file = Path(args.config_file)
+    if not config_file.exists():
+        raise FileNotFoundError(f"Configuration file not found: {config_file}")
+    config = load_config(config_file)
+
+    train(config)
+
+
+if __name__ == "__main__":
+    main()

@@ -25,8 +25,9 @@ def train(config: SCATrainingConfig):
     local_rank = get_local_rank()
 
     logger.debug(config, f"Detected FSDP mode as: {is_fsdp()} at local rank {local_rank}", rank0_only=False)
+    torch.cuda.set_device(local_rank)
     if is_fsdp():
-        device_map = None
+        device_map = {"": local_rank}
     else:
         device_map = {"": local_rank}
     logger.debug(config, f"Using device map: {device_map} at local rank {local_rank}", rank0_only=False)

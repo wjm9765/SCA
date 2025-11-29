@@ -73,7 +73,7 @@ def train(config: SCATrainingConfig):
         device_map=device_map,
         trust_remote_code=True,
         attn_implementation=config.attn_impl,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         cache_dir=config.hf_home if config.hf_home else None,
     )
     logger.debug(config, f"Finished loading model at local rank {local_rank}", rank0_only=False)

@@ -1,3 +1,6 @@
+import os
+
+
 def prepare_model_for_kbit_training(model, use_gradient_checkpointing: bool = True, gradient_checkpointing_kwargs = None):
     if use_gradient_checkpointing:
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
@@ -15,3 +18,11 @@ def prepare_model_for_kbit_training(model, use_gradient_checkpointing: bool = Tr
         output.requires_grad_(True)
 
     embed_tokens.register_forward_hook(make_inputs_require_grad)
+
+
+def is_fsdp() -> bool:
+    return os.environ.get("ACCELERATE_USE_FSDP", "false") == "true"
+
+
+def get_local_rank() -> int:
+    return int(os.environ.get("LOCAL_RANK", "0"))

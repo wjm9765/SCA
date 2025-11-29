@@ -1,5 +1,5 @@
-from .utils import get_local_rank
 from .config import SCATrainingConfig, SCATrainingVerbosityLevel
+from .utils import get_local_rank
 
 
 def debug(config: SCATrainingConfig, message: str, rank0_only: bool = True) -> None:

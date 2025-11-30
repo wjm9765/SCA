@@ -18,3 +18,4 @@ class SCATrainingArguments(BaseModel):
     remove_unused_columns: bool = False
     ddp_find_unused_parameters: bool = False
     report_to: List[str] = ["none"]
+    save_only_model: bool = True

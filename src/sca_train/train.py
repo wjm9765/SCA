@@ -172,6 +172,7 @@ def train(config: SCATrainingConfig):
         remove_unused_columns=training_args.remove_unused_columns,
         ddp_find_unused_parameters=training_args.ddp_find_unused_parameters,
         report_to=training_args.report_to,
+        save_only_model=training_args.save_only_model,
     )
     logger.debug(config, f"TrainingArguments: {args}")
 

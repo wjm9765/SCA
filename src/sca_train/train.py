@@ -93,6 +93,14 @@ def train(config: SCATrainingConfig):
     )
     logger.debug(config, f"Finished loading model at local rank {local_rank}", rank0_only=False)
 
+    if hasattr(model, "thinker"):
+        model.model = model.thinker
+        logger.debug(config, "Patched model.model for FSDP/Qwen compatibility.")
+
+        if hasattr(model.thinker, "forward"):
+            model.forward = model.thinker.forward
+            logger.debug(config, "Patched model.forward for FSDP/Qwen compatibility.")
+
     logger.debug(config, f"Freezing layers")
     if hasattr(model, "thinker") and hasattr(model.thinker, "audio_tower"):
         model.thinker.audio_tower.requires_grad_(False)

@@ -102,6 +102,15 @@ def train(config: SCATrainingConfig):
             model.forward = model.thinker.forward
             logger.debug(config, "Patched model.forward for FSDP/Qwen compatibility.")
 
+    logger.debug(config, "Forcing model to bfloat16 to satisfy FSDP uniformity...")
+    for param in model.parameters():
+        if param.is_floating_point():
+            param.data = param.data.to(torch.bfloat16)
+
+    for buffer in model.buffers():
+        if buffer.is_floating_point():
+            buffer.data = buffer.data.to(torch.bfloat16)
+
     logger.debug(config, f"Freezing layers")
     if hasattr(model, "thinker") and hasattr(model.thinker, "audio_tower"):
         model.thinker.audio_tower.requires_grad_(False)

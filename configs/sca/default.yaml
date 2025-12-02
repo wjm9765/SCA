@@ -34,4 +34,4 @@ training_args:
   ddp_find_unused_parameters: false
   report_to:
     - "wandb"
-  save_only_model: true
+  save_only_model: false  # overrided in custom trainer. DO NOT CHANGE TO TRUE

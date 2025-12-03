@@ -19,3 +19,5 @@ class SCATrainingArguments(BaseModel):
     ddp_find_unused_parameters: bool = False
     report_to: List[str] = ["none"]
     save_only_model: bool = True
+    dataloader_pin_memory: bool = True
+    dataloader_num_workers: int = 4

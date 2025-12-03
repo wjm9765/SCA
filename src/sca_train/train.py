@@ -173,6 +173,8 @@ def train(config: SCATrainingConfig):
         ddp_find_unused_parameters=training_args.ddp_find_unused_parameters,
         report_to=training_args.report_to,
         save_only_model=training_args.save_only_model,
+        dataloader_pin_memory=training_args.dataloader_pin_memory,
+        dataloader_num_workers=training_args.dataloader_num_workers,
     )
     logger.debug(config, f"TrainingArguments: {args}")
 

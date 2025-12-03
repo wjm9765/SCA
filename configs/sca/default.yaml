@@ -37,3 +37,4 @@ training_args:
   save_only_model: false  # overrided in custom trainer. DO NOT CHANGE TO TRUE
   data_loader_pin_memory: true
   dataloader_num_workers: 4
+  dataloader_prefetch_factor: 2

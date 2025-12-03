@@ -21,3 +21,4 @@ class SCATrainingArguments(BaseModel):
     save_only_model: bool = True
     dataloader_pin_memory: bool = True
     dataloader_num_workers: int = 4
+    dataloader_prefetch_factor: int = 2

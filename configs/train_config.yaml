@@ -1,0 +1,60 @@
+# configs/train_config.yaml
+
+# [환경 및 모델 설정]
+model: "/workspace/models/huihui_uncensored"  
+model_type: "qwen3_omni"
+template: "qwen3-omni-sca"
+custom_register_path: "./src/template.py"
+dataset: ["sca_audio_final"]
+
+output_dir: "/workspace/qwen3_omni_sca_result"
+
+# [학습 이어하기 설정]
+resume_from_checkpoint: null
+
+# [LoRA 설정]
+train_type: "lora"
+target_modules: "^thinker\\.model\\.layers\\.\\d+\\..*(q|k|v|o)_proj$"
+lora_rank: 32
+lora_alpha: 64
+lora_dropout: 0.05
+freeze_vit: true
+freeze_aligner: true
+
+# [Quantization (QLoRA) 설정]
+quant_method: "bnb"
+quant_bits: 4
+bnb_4bit_compute_dtype: "bfloat16"
+bnb_4bit_quant_type: "nf4"
+bnb_4bit_use_double_quant: true
+
+# [학습 하이퍼파라미터]
+bf16: true
+num_train_epochs: 3
+per_device_train_batch_size: 1
+gradient_checkpointing: true
+gradient_accumulation_steps: 4
+learning_rate: 1.0e-4
+max_length: 2048
+
+# 데이터셋 분리 비율 train/val
+#split_dataset_ratio: 0.05
+
+
+# [로깅 및 저장]
+logging_steps: 5
+save_steps: 50
+save_total_limit: 3
+
+#wandDB
+report_to: ["wandb"]
+
+# [데이터 처리]
+lazy_tokenize: true
+dataset_num_proc: 1
+dataloader_num_workers: 0
+load_from_cache_file: false
+
+# [DDP 설정]
+ddp_find_unused_parameters: true
+deepspeed: "./ds_config.json"

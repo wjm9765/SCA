@@ -22,6 +22,7 @@ if [ "$(uname)" == "Linux" ]; then
         fi
     fi
     sudo apt update && sudo apt install -y gh btop nvtop screen git jq
+    echo "termcapinfo xterm* ti@:te@" >> ~/.screenrc
   fi
 fi
 

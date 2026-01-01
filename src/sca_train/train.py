@@ -155,7 +155,21 @@ def train(config: SCATrainingConfig):
         task_type=talker_cfg.task_type,
     )
     model.add_adapter("talker", talker_peft_config)
-    model.set_adapter(["thinker", "talker"])
+    # After add_adapter, "talker" is not automatically trainable (only active adapter is trainable)
+    # Use set_requires_grad to enable gradients on both adapters
+    model.set_requires_grad(["thinker", "talker"], requires_grad=True)
+    
+    if get_local_rank() == 0:
+        trainable_params = []
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                trainable_params.append(name)
+        logger.debug(config, f"Trainable parameters ({len(trainable_params)} total):")
+        for name in trainable_params[:50]:  # Log first 50
+            logger.debug(config, f"  {name}")
+        if len(trainable_params) > 50:
+            logger.debug(config, f"  ... and {len(trainable_params) - 50} more")
+    
     if get_local_rank() == 0 and config.verbose >= config.verbose.INFO:
         model.print_trainable_parameters()
 

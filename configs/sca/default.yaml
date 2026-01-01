@@ -16,7 +16,7 @@ lora_config:
     r: 32
     use_dora: false
     lora_alpha: 64
-    target_modules_regex: "thinker\\.model\\.layers\\.\\d+\\.self_attn\\.(q|k|v|o|gate|up|down)_proj$"
+    target_modules_regex: "thinker\\.model\\.layers\\.\\d+\\.(self_attn\\.(q|k|v|o)_proj|mlp\\.(gate|up|down)_proj)$"
     lora_dropout: 0.05
     lora_bias: "none"
     task_type: "CAUSAL_LM"
@@ -24,7 +24,7 @@ lora_config:
     r: 32
     use_dora: false
     lora_alpha: 64
-    target_modules_regex: "talker\\.model\\.layers\\.\\d+\\.self_attn\\.(q|k|v|o|gate|up|down)_proj$"
+    target_modules_regex: "talker\\.model\\.layers\\.\\d+\\.(self_attn\\.(q|k|v|o)_proj|mlp\\.(gate|up|down)_proj)$"
     lora_dropout: 0.05
     lora_bias: "none"
     task_type: "CAUSAL_LM"

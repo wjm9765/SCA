@@ -15,14 +15,14 @@ lora_config:
   thinker:
     r: 64
     lora_alpha: 128
-    target_modules_regex: "^thinker\\.model\\.layers\\.\\d+\\..*(q|k|v|o)_proj$"
+    target_modules_regex: "thinker\\.model\\.layers\\.\\d+\\.self_attn\\.(q|k|v|o)_proj$"
     lora_dropout: 0.05
     lora_bias: "none"
     task_type: "CAUSAL_LM"
   talker:
     r: 64
     lora_alpha: 128
-    target_modules_regex: "^talker\\.model\\.layers\\.\\d+\\..*(q|k|v|o)_proj$"
+    target_modules_regex: "talker\\.model\\.layers\\.\\d+\\.self_attn\\.(q|k|v|o)_proj$"
     lora_dropout: 0.05
     lora_bias: "none"
     task_type: "CAUSAL_LM"

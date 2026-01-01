@@ -160,15 +160,35 @@ def train(config: SCATrainingConfig):
     model.set_requires_grad(["thinker", "talker"], requires_grad=True)
     
     if get_local_rank() == 0:
-        trainable_params = []
+        thinker_params = []
+        talker_params = []
+        other_params = []
         for name, param in model.named_parameters():
             if param.requires_grad:
-                trainable_params.append(name)
-        logger.debug(config, f"Trainable parameters ({len(trainable_params)} total):")
-        for name in trainable_params[:50]:  # Log first 50
+                if ".thinker." in name and "lora_" in name:
+                    thinker_params.append(name)
+                elif ".talker." in name and "lora_" in name:
+                    talker_params.append(name)
+                else:
+                    other_params.append(name)
+        
+        logger.debug(config, f"Thinker LoRA parameters: {len(thinker_params)}")
+        for name in thinker_params[:5]:
             logger.debug(config, f"  {name}")
-        if len(trainable_params) > 50:
-            logger.debug(config, f"  ... and {len(trainable_params) - 50} more")
+        if len(thinker_params) > 5:
+            logger.debug(config, f"  ... and {len(thinker_params) - 5} more")
+            
+        logger.debug(config, f"Talker LoRA parameters: {len(talker_params)}")
+        for name in talker_params[:5]:
+            logger.debug(config, f"  {name}")
+        if len(talker_params) > 5:
+            logger.debug(config, f"  ... and {len(talker_params) - 5} more")
+            
+        logger.debug(config, f"Other trainable parameters: {len(other_params)}")
+        for name in other_params[:10]:
+            logger.debug(config, f"  {name}")
+        if len(other_params) > 10:
+            logger.debug(config, f"  ... and {len(other_params) - 10} more")
     
     if get_local_rank() == 0 and config.verbose >= config.verbose.INFO:
         model.print_trainable_parameters()

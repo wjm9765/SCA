@@ -142,6 +142,7 @@ def train(config: SCATrainingConfig):
     
     thinker_peft_config = LoraConfig(
         r=thinker_cfg.r,
+        use_dora=thinker_cfg.use_dora,
         lora_alpha=thinker_cfg.lora_alpha,
         target_modules=thinker_cfg.target_modules_regex,
         lora_dropout=thinker_cfg.lora_dropout,
@@ -153,6 +154,7 @@ def train(config: SCATrainingConfig):
     
     talker_peft_config = LoraConfig(
         r=talker_cfg.r,
+        use_dora=talker_cfg.use_dora,
         lora_alpha=talker_cfg.lora_alpha,
         target_modules=talker_cfg.target_modules_regex,
         lora_dropout=talker_cfg.lora_dropout,

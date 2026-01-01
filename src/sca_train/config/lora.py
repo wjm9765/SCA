@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class ComponentLoraConfig(BaseModel):
     r: int = 64
+    use_dora: bool = False
     lora_alpha: int = 128
     target_modules_regex: str
     lora_dropout: float = 0.05

@@ -13,16 +13,18 @@ mask_instruction: true
 lora_config:
   use_qlora: true
   thinker:
-    r: 64
-    lora_alpha: 128
-    target_modules_regex: "thinker\\.model\\.layers\\.\\d+\\.self_attn\\.(q|k|v|o)_proj$"
+    r: 32
+    use_dora: false
+    lora_alpha: 64
+    target_modules_regex: "thinker\\.model\\.layers\\.\\d+\\.self_attn\\.(q|k|v|o|gate|up|down)_proj$"
     lora_dropout: 0.05
     lora_bias: "none"
     task_type: "CAUSAL_LM"
   talker:
-    r: 64
-    lora_alpha: 128
-    target_modules_regex: "talker\\.model\\.layers\\.\\d+\\.self_attn\\.(q|k|v|o)_proj$"
+    r: 32
+    use_dora: false
+    lora_alpha: 64
+    target_modules_regex: "talker\\.model\\.layers\\.\\d+\\.self_attn\\.(q|k|v|o|gate|up|down)_proj$"
     lora_dropout: 0.05
     lora_bias: "none"
     task_type: "CAUSAL_LM"

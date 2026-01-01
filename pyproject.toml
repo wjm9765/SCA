@@ -22,6 +22,7 @@ dependencies = [
     "peft>=0.18.0",
     "qwen-omni-utils>=0.0.8",
     "sca-data",
+    "speechbrain>=1.0.3",
     "torch>=2.9.1",
     "torchaudio>=2.9.1",
     "torchcodec>=0.8.1",

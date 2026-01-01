@@ -10,7 +10,10 @@ fsdp_config:
   fsdp_offload_params: false
   fsdp_reshard_after_forward: true
   fsdp_state_dict_type: SHARDED_STATE_DICT
-  fsdp_transformer_layer_cls_to_wrap: Qwen3OmniMoeThinkerTextDecoderLayer
+  fsdp_transformer_layer_cls_to_wrap:
+    - Qwen3OmniMoeThinkerTextDecoderLayer
+    - Qwen3OmniMoeTalkerDecoderLayer
+    - Qwen3OmniMoeTalkerCodePredictorDecoderLayer
   fsdp_version: 1
   # for FSDP
   fsdp_use_orig_params: true

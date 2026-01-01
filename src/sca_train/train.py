@@ -178,24 +178,25 @@ def train(config: SCATrainingConfig):
                     talker_params.append(name)
                 else:
                     other_params.append(name)
-        
+
+        entries_to_show = 20
         logger.debug(config, f"Thinker LoRA parameters: {len(thinker_params)}")
-        for name in thinker_params[:5]:
+        for name in thinker_params[:entries_to_show]:
             logger.debug(config, f"  {name}")
-        if len(thinker_params) > 5:
-            logger.debug(config, f"  ... and {len(thinker_params) - 5} more")
+        if len(thinker_params) > entries_to_show:
+            logger.debug(config, f"  ... and {len(thinker_params) - entries_to_show} more")
             
         logger.debug(config, f"Talker LoRA parameters: {len(talker_params)}")
-        for name in talker_params[:5]:
+        for name in talker_params[:entries_to_show]:
             logger.debug(config, f"  {name}")
-        if len(talker_params) > 5:
-            logger.debug(config, f"  ... and {len(talker_params) - 5} more")
+        if len(talker_params) > entries_to_show:
+            logger.debug(config, f"  ... and {len(talker_params) - entries_to_show} more")
             
         logger.debug(config, f"Other trainable parameters: {len(other_params)}")
-        for name in other_params[:10]:
+        for name in other_params[:entries_to_show]:
             logger.debug(config, f"  {name}")
-        if len(other_params) > 10:
-            logger.debug(config, f"  ... and {len(other_params) - 10} more")
+        if len(other_params) > entries_to_show:
+            logger.debug(config, f"  ... and {len(other_params) - entries_to_show} more")
     
     if get_local_rank() == 0 and config.verbose >= config.verbose.INFO:
         model.print_trainable_parameters()

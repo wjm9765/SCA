@@ -148,7 +148,7 @@ def train(config: SCATrainingConfig):
         lora_dropout=thinker_cfg.lora_dropout,
         bias=thinker_cfg.lora_bias,
         task_type=thinker_cfg.task_type,
-        modules_to_save=["talker.code_predictor"],
+        modules_to_save=["talker.code_predictor", "speaker_projection"],
     )
     model = get_peft_model(model, thinker_peft_config, adapter_name="thinker")
     

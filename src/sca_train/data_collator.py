@@ -1,5 +1,9 @@
 import numpy as np
+import torch
 from transformers import Qwen3OmniMoeProcessor
+
+# Expected speaker embedding dimension (ECAPA-TDNN output)
+SPEAKER_EMBEDDING_DIM = 192
 
 
 class Qwen3OmniCollator:
@@ -26,12 +30,14 @@ class Qwen3OmniCollator:
         texts = []
         audios = []
         assistant_audios = []
+        speaker_embeddings = []
 
         # 2. Extract Data
         for feature in features:
             messages = feature["messages"]
             feature_audio = None
             assistant_audio = None
+            speaker_embedding = None
             user_found = False
             assistant_found = False
 
@@ -68,6 +74,26 @@ class Qwen3OmniCollator:
                                 assistant_audio = content.pop("audio_waveform")
                                 assistant_audios.append(assistant_audio)
                                 remove_idx.append(i)
+                            
+                            # Extract pre-computed speaker embedding
+                            if "speaker_embedding" in content:
+                                if speaker_embedding is not None:
+                                    raise ValueError("Multiple speaker embeddings found in a single input.")
+                                speaker_embedding = content.pop("speaker_embedding")
+                                
+                                # Validate speaker embedding dimensions
+                                if isinstance(speaker_embedding, np.ndarray):
+                                    speaker_embedding = torch.from_numpy(speaker_embedding)
+                                
+                                if speaker_embedding.ndim == 1:
+                                    speaker_embedding = speaker_embedding.unsqueeze(0)  # [192] -> [1, 192]
+                                
+                                assert speaker_embedding.shape == (1, SPEAKER_EMBEDDING_DIM), (
+                                    f"Speaker embedding must be shape [1, {SPEAKER_EMBEDDING_DIM}], "
+                                    f"got {speaker_embedding.shape}"
+                                )
+                                speaker_embeddings.append(speaker_embedding)
+                                
                     for idx in reversed(remove_idx):
                         del msg["content"][idx]
 
@@ -75,6 +101,13 @@ class Qwen3OmniCollator:
                 feature_audio = np.zeros(16000)
             if self.train_talker ^ (assistant_audio is not None):
                 raise ValueError("Mismatch in talker training mode and presence of assistant audio.")
+            
+            # Validate speaker embedding is present when training talker
+            if self.train_talker and speaker_embedding is None:
+                raise ValueError(
+                    "speaker_embedding must be provided in assistant audio content when train_talker=True. "
+                    "Pre-compute speaker embeddings in your dataset using ECAPA-TDNN."
+                )
 
             audios.append(feature_audio)
 
@@ -118,4 +151,13 @@ class Qwen3OmniCollator:
         batch["labels"] = labels
         if len(assistant_audios) > 0:
             batch["assistant_audios"] = assistant_audios
+        
+        # Stack speaker embeddings into a batch tensor [batch, 192]
+        if len(speaker_embeddings) > 0:
+            batch["speaker_embeddings"] = torch.cat(speaker_embeddings, dim=0).float()
+            assert batch["speaker_embeddings"].shape == (len(speaker_embeddings), SPEAKER_EMBEDDING_DIM), (
+                f"Batched speaker_embeddings shape mismatch: expected "
+                f"[{len(speaker_embeddings)}, {SPEAKER_EMBEDDING_DIM}], got {batch['speaker_embeddings'].shape}"
+            )
+        
         return batch

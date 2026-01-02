@@ -2,6 +2,7 @@ from typing import List
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from transformers import (
     Qwen3OmniMoeForConditionalGeneration,
@@ -35,6 +36,12 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         for param in self.mimi_model.parameters():
             param.requires_grad = False
 
+        # Projection layer: speaker embedding (192 dim from ECAPA-TDNN) -> talker hidden size
+        # Speaker embeddings are pre-computed in the dataset, not extracted here
+        speaker_embed_dim = 192  # ECAPA-TDNN output dimension
+        talker_hidden_size = self.config.talker_config.text_config.hidden_size
+        self.speaker_projection = nn.Linear(speaker_embed_dim, talker_hidden_size)
+
     def _get_unwrapped_code_predictor(self):
         """Get the code_predictor unwrapped from PEFT's ModulesToSaveWrapper if present.
         
@@ -56,6 +63,81 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
                 code_predictor = code_predictor.original_module
         
         return code_predictor
+
+    def _get_talker_assistant_parts(
+        self, im_start_index, segment_end_index, speaker_embedding: torch.Tensor,
+        thinker_embed, tts_pad_embed, tts_bos_embed, tts_eos_embed
+    ):
+        """Build talker assistant parts with speaker embedding instead of speaker_id.
+        
+        This overrides the parent class method to use a continuous speaker embedding
+        (extracted from audio via ECAPA-TDNN) instead of a discrete speaker token ID.
+        This enables voice cloning with unlimited speakers.
+        
+        Args:
+            im_start_index: Start index of assistant segment
+            segment_end_index: End index of assistant segment
+            speaker_embedding: Speaker embedding tensor [1, 192] from ECAPA-TDNN
+            thinker_embed: Thinker embeddings
+            tts_pad_embed: TTS pad embedding
+            tts_bos_embed: TTS BOS embedding
+            tts_eos_embed: TTS EOS embedding
+            
+        Returns:
+            Tuple of (input_embeds, input_ids, trailing_text_hidden)
+        """
+        # Project speaker embedding to talker hidden size
+        projected_speaker = self.speaker_projection(speaker_embedding)  # [1, talker_hidden_size]
+        
+        assistant_hidden = self.talker.text_projection(
+            thinker_embed[:, im_start_index:segment_end_index]
+        ).to(self.talker.device)  # [1, seq_len, hidden]
+        
+        assistant_text_hidden = torch.cat((
+            assistant_hidden[:, :3],
+            tts_pad_embed.expand(-1, 4, -1),
+            tts_bos_embed,
+            assistant_hidden[:, 3:4],  # First text token
+        ), dim=1)
+        
+        # Embed codec special tokens (using placeholder for speaker slot)
+        codec_special_tokens = torch.tensor([[
+            self.config.talker_config.codec_nothink_id,
+            self.config.talker_config.codec_think_bos_id,
+            self.config.talker_config.codec_think_eos_id,
+            self.config.talker_config.codec_pad_id,  # Placeholder - will be replaced
+            self.config.talker_config.codec_pad_id,
+            self.config.talker_config.codec_bos_id,
+        ]], device=self.talker.device, dtype=torch.long)
+        
+        codec_embeds = self.talker.get_input_embeddings()(codec_special_tokens).to(self.talker.device)
+        
+        # Replace position 3 (speaker slot) with projected speaker embedding
+        codec_embeds[:, 3, :] = projected_speaker.to(codec_embeds.dtype)
+        
+        assistant_codec_hidden = torch.cat((
+            torch.zeros(
+                (1, 3, self.config.talker_config.text_config.hidden_size),
+                device=self.talker.device,
+                dtype=self.talker.dtype,
+            ),
+            codec_embeds,
+        ), dim=1)
+        
+        trailing_text_hidden = torch.cat((
+            assistant_hidden[:, 4:],
+            tts_eos_embed,
+        ), dim=1)
+        
+        input_embeds = assistant_text_hidden + assistant_codec_hidden
+        input_ids = torch.full(
+            (1, assistant_text_hidden.shape[1]),
+            fill_value=self.config.tts_pad_token_id,
+            dtype=torch.long,
+            device=assistant_text_hidden.device,
+        )
+        
+        return input_embeds, input_ids, trailing_text_hidden
 
     def _encode_audio_to_codes(self, audios: List[np.ndarray]) -> torch.Tensor:
         """
@@ -142,10 +224,20 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
             self,
             thinker_outputs,
             input_ids: torch.Tensor,
-            speaker_name: str,
+            speaker_embedding: torch.Tensor,
             batch_idx: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Build talker prefix for a single sample in the batch."""
+        """Build talker prefix for a single sample in the batch.
+        
+        Args:
+            thinker_outputs: Output from thinker model with hidden states
+            input_ids: Input token IDs [batch, seq_len]
+            speaker_embedding: Speaker embedding [1, 192] from ECAPA-TDNN
+            batch_idx: Index of sample in batch
+            
+        Returns:
+            Tuple of (talker_input_embed, talker_input_id, trailing_text_hidden, tts_pad_embed)
+        """
         config = self.config
         thinker_embed = thinker_outputs.hidden_states[0][batch_idx:batch_idx+1].to(self.device)
         accept_layer = config.talker_config.accept_hidden_layer
@@ -191,14 +283,6 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
             .chunk(3, dim=1)
         )
 
-        speaker_map = config.talker_config.speaker_id
-        if speaker_map is None:
-             raise ValueError("Speaker ID map is not configured in talker_config.")
-             
-        speaker_id = speaker_map.get(speaker_name.lower())
-        if speaker_id is None:
-            raise ValueError(f"Speaker {speaker_name} not supported by the current checkpoint.")
-
         talker_input_embeds, talker_input_ids = [], []
         trailing_text_hidden = None
 
@@ -217,10 +301,11 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
                 talker_input_embeds.append(user_part)
                 talker_input_ids.append(input_ids[batch_idx:batch_idx+1, im_start_index:segment_end_index])
             elif role_token == config.assistant_token_id and i == len(im_start_indexes) - 2:
+                # Use speaker_embedding instead of speaker_id
                 assistant_embeds, assistant_ids, trailing_text_hidden = self._get_talker_assistant_parts(
                     im_start_index,
                     segment_end_index,
-                    speaker_id,
+                    speaker_embedding,  # Speaker embedding from ECAPA-TDNN
                     thinker_embed,
                     tts_pad_embed,
                     tts_bos_embed,
@@ -240,9 +325,14 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
             self,
             thinker_outputs,
             input_ids: torch.Tensor,
-            speaker_name: str,
+            speaker_embeddings: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Build talker prefix for batch of samples.
+        
+        Args:
+            thinker_outputs: Output from thinker model with hidden states
+            input_ids: Input token IDs [batch, seq_len]
+            speaker_embeddings: Speaker embeddings [batch, 192] from ECAPA-TDNN
         
         Returns:
             talker_input_embed: [batch, max_prefix_len, hidden]
@@ -257,7 +347,7 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         if batch_size == 1:
             # Fast path for batch_size=1
             talker_embed, talker_id, trailing_hidden, tts_pad = self._build_talker_prefix_single(
-                thinker_outputs, input_ids, speaker_name, batch_idx=0
+                thinker_outputs, input_ids, speaker_embeddings[0:1], batch_idx=0
             )
             original_prefix_lens = torch.tensor([talker_embed.shape[1]], device=self.device)
             original_trailing_lens = torch.tensor([trailing_hidden.shape[1]], device=self.device)
@@ -272,8 +362,10 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         original_trailing_lens = []
         
         for batch_idx in range(batch_size):
+            # Extract speaker embedding for this sample [1, 192]
+            sample_speaker_embedding = speaker_embeddings[batch_idx:batch_idx+1]
             talker_embed, talker_id, trailing_hidden, tts_pad = self._build_talker_prefix_single(
-                thinker_outputs, input_ids, speaker_name, batch_idx
+                thinker_outputs, input_ids, sample_speaker_embedding, batch_idx
             )
             batch_talker_embeds.append(talker_embed)
             batch_talker_ids.append(talker_id)
@@ -337,11 +429,20 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         # Compute audio codebook (Talker inference target)
         # Target code is ground truth code for talker prediction
         target_codes = None
+        speaker_embeddings = None
         if "assistant_audios" in kwargs:
             assistant_audios = kwargs.pop("assistant_audios")
             target_codes = self._encode_and_align_audio(assistant_audios)
             if target_codes.shape[0] != kwargs["input_ids"].shape[0]:
                 raise ValueError("Batch size of assistant_audios does not match input_ids.")
+        
+        # Get pre-computed speaker embeddings from kwargs (computed in dataset/collator)
+        if "speaker_embeddings" in kwargs:
+            speaker_embeddings = kwargs.pop("speaker_embeddings")
+            # Validate speaker embeddings shape
+            if speaker_embeddings.ndim != 2 or speaker_embeddings.shape[1] != 192:
+                raise ValueError(f"speaker_embeddings must be [batch, 192], got {speaker_embeddings.shape}")
+            speaker_embeddings = speaker_embeddings.to(self.device)
 
         # Run thinker inference
         # Ensure output_hidden_states=True for talker prefix construction
@@ -366,12 +467,16 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
             talker_loss = torch.tensor(0.0, device=self.device)
             mtp_avg_loss = torch.tensor(0.0, device=self.device)
         else:
-            # Build Talker prefix (returns padded tensors + original lengths)
+            # Speaker embeddings are required for talker training
+            if speaker_embeddings is None:
+                raise ValueError("speaker_embeddings must be provided when assistant_audios is present")
+            
+            # Build Talker prefix with speaker embeddings
             (talker_input_embed, talker_input_ids, trailing_text_hidden, tts_pad_embed,
              original_prefix_lens, original_trailing_lens) = self._build_talker_prefix(
                 thinker_outputs=thinker_outputs,
                 input_ids=kwargs["input_ids"],
-                speaker_name="Ethan",  # TODO: Fix speaker name handling
+                speaker_embeddings=speaker_embeddings,  # Pre-computed speaker embeddings [batch, 192]
             )
 
             # Talker gets layer 0 codebook as target

@@ -48,8 +48,13 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         ignore_patterns = self._keys_to_ignore_on_load_missing or []
         if ignore_patterns:
             ignore_regex = re.compile("|".join(rf"({p})" for p in ignore_patterns))
-            missing_keys = [k for k in missing_keys if ignore_regex.search(k) is None]
-        
+            filtered_keys = []
+            for k in missing_keys:
+                if ignore_regex.search(k) is None:
+                    filtered_keys.append(k)
+            missing_keys = filtered_keys
+
+        print(f"Initializing missing keys (after filtering): {missing_keys}")
         super()._initialize_missing_keys(missing_keys, is_quantized)
 
     def _get_unwrapped_code_predictor(self):

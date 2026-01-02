@@ -760,8 +760,7 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         
         # ==================== Phase 3: Combine Losses & Return ====================
         # Combined loss: Thinker + Talker + MTP
-        # Weight MTP loss higher since it's harder to learn
-        mtp_weight = 2.0
+        mtp_weight = 0.5
         
         # Handle case where thinker_loss might be None (no labels provided)
         if thinker_loss is None:

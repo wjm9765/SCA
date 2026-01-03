@@ -4,7 +4,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import gc
 import torch
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, inject_adapter_in_model
 from transformers import (
     Qwen3OmniMoeProcessor,
     TrainingArguments,
@@ -155,7 +155,7 @@ def train(config: SCATrainingConfig):
         modules_to_save=["talker.code_predictor", "speaker_projection"],
     )
     model = get_peft_model(model, thinker_peft_config, adapter_name="thinker")
-    
+
     talker_peft_config = LoraConfig(
         r=talker_cfg.r,
         use_dora=talker_cfg.use_dora,
@@ -165,10 +165,22 @@ def train(config: SCATrainingConfig):
         bias=talker_cfg.lora_bias,
         task_type=talker_cfg.task_type,
     )
-    model.add_adapter("talker", talker_peft_config)
-    # After add_adapter, "talker" is not automatically trainable (only active adapter is trainable)
-    # Use set_requires_grad to enable gradients on both adapters
+    inject_adapter_in_model(talker_peft_config, model, adapter_name="talker")
     model.set_requires_grad(["thinker", "talker"], requires_grad=True)
+    
+    # Verify talker LoRA was created (fail-fast if something went wrong)
+    if get_local_rank() == 0:
+        talker_lora_count = sum(1 for n, p in model.named_parameters() 
+                                if p.requires_grad and ".talker." in n and "lora_" in n)
+        logger.debug(config, f"Verification: Talker LoRA parameters created: {talker_lora_count}")
+        thinker_lora_count = sum(1 for n, p in model.named_parameters()
+                                if p.requires_grad and ".thinker." in n and "lora_" in n)
+        logger.debug(config, f"Verification: Thinker LoRA parameters created: {thinker_lora_count}")
+        if talker_lora_count == 0:
+            raise RuntimeError("CRITICAL: Talker LoRA was not created! Check inject_adapter_in_model call.")
+        if thinker_lora_count == 0:
+            raise RuntimeError("CRITICAL: Thinker LoRA was not created! Check get_peft_model call.")
+    logger.debug(config, f"Model after PEFT LoRA injection: {model}")
     
     if get_local_rank() == 0:
         thinker_params = []
@@ -246,6 +258,10 @@ def train(config: SCATrainingConfig):
 
     logger.info(config, f"Starting training")
     trainer.train(resume_from_checkpoint=True)
+
+    if trainer.is_fsdp_enabled:
+        logger.info(config, "Converting FSDP state dict to FULL_STATE_DICT for final save")
+        trainer.accelerator.state.fsdp_plugin.set_state_dict_type("FULL_STATE_DICT")
 
     logger.info(config, f"Saving trained model to {config.train_output_dir.as_posix()}")
     trainer.save_model((config.train_output_dir / "final_model").as_posix())

@@ -9,14 +9,14 @@ from safetensors import safe_open
 # Expected LoRA layers per transformer layer
 # NOTE: Only attention projections have LoRA applied. MLP projections (gate/up/down_proj)
 # don't match because Qwen3-Omni uses MoE architecture with different module naming.
-# Talker also has no LoRA - only code_predictor is trained via modules_to_save.
 LORA_PROJECTIONS = ["q_proj", "k_proj", "v_proj", "o_proj"]
 
 # Expected modules to save (full weights, not LoRA)
 MODULES_TO_SAVE = ["speaker_projection", "code_predictor"]
 
-# Expected number of layers (Qwen3-Omni-30B thinker has 48 layers)
-EXPECTED_THINKER_LAYERS = 48
+# Expected number of layers
+EXPECTED_THINKER_LAYERS = 48  # Qwen3-Omni thinker: 48 layers
+EXPECTED_TALKER_LAYERS = 20   # Qwen3-Omni talker: 20 layers
 
 
 def check_files_exist(checkpoint_dir: Path) -> bool:
@@ -99,13 +99,18 @@ def check_weights(checkpoint_dir: Path) -> bool:
         # Each layer should have lora_A and lora_B for each projection
         # So expect: num_layers * len(LORA_PROJECTIONS) * 2
         # With 48 layers and 4 projections: 48 * 4 * 2 = 384 keys
-        expected_keys = EXPECTED_THINKER_LAYERS * len(LORA_PROJECTIONS) * 2
-        if len(thinker_lora_keys) != expected_keys:
-            print(f"  WARN: Expected {expected_keys} thinker LoRA keys, got {len(thinker_lora_keys)}")
+        expected_thinker_keys = EXPECTED_THINKER_LAYERS * len(LORA_PROJECTIONS) * 2
+        if len(thinker_lora_keys) != expected_thinker_keys:
+            print(f"  WARN: Expected {expected_thinker_keys} thinker LoRA keys, got {len(thinker_lora_keys)}")
     
-    # NOTE: Talker does NOT use LoRA - only code_predictor is trained via modules_to_save
-    if len(talker_lora_keys) > 0:
-        print(f"  INFO: Found {len(talker_lora_keys)} talker LoRA keys (unexpected but not an error)")
+    # Check talker LoRA (should now exist after inject_adapter_in_model fix!)
+    if len(talker_lora_keys) == 0:
+        issues.append("No talker LoRA keys found")
+    else:
+        # 20 layers * 4 projections * 2 (A/B) = 160 keys
+        expected_talker_keys = EXPECTED_TALKER_LAYERS * len(LORA_PROJECTIONS) * 2
+        if len(talker_lora_keys) != expected_talker_keys:
+            print(f"  WARN: Expected {expected_talker_keys} talker LoRA keys, got {len(talker_lora_keys)}")
     
     # Check modules_to_save
     if len(speaker_keys) == 0:

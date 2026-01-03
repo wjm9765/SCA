@@ -164,7 +164,6 @@ def train(config: SCATrainingConfig):
         lora_dropout=thinker_cfg.lora_dropout,
         bias=thinker_cfg.lora_bias,
         task_type=thinker_cfg.task_type,
-        modules_to_save=["talker.code_predictor", "speaker_projection"],
     )
     
     logger.debug(config, f"Applying thinker LoRA with adapter_name='thinker'...")
@@ -191,11 +190,12 @@ def train(config: SCATrainingConfig):
         lora_dropout=talker_cfg.lora_dropout,
         bias=talker_cfg.lora_bias,
         task_type=talker_cfg.task_type,
+        modules_to_save=["talker.code_predictor", "speaker_projection"],
     )
     
     logger.debug(config, f"Injecting talker LoRA with adapter_name='talker'...")
     logger.debug(config, f"  Talker target_modules regex: {talker_cfg.target_modules_regex}")
-    model = inject_adapter_in_model(talker_peft_config, model, adapter_name="talker")
+    inject_adapter_in_model(talker_peft_config, model, adapter_name="talker")
     
     logger.debug(config, "Setting requires_grad=True for both thinker and talker adapters...")
     model.set_requires_grad(["thinker", "talker"], requires_grad=True)

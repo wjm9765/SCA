@@ -81,17 +81,22 @@ def extract_trained_weights(
 
 
 def create_adapter_config(base_model_id: str) -> dict:
-    """Create PEFT adapter configuration."""
+    """Create PEFT adapter configuration matching training config."""
+    # These values match configs/sca/default.yaml
     return {
         "base_model_name_or_path": base_model_id,
         "peft_type": "LORA",
         "task_type": "CAUSAL_LM",
         "inference_mode": False,
+        # Thinker/Talker shared LoRA params (from default.yaml)
         "r": 32,
         "lora_alpha": 64,
         "lora_dropout": 0.05,
         "bias": "none",
+        "use_dora": False,
+        # Modules to save (trained in full precision)
         "modules_to_save": ["speaker_projection", "talker.code_predictor"],
+        # Target modules (matches the regex patterns in default.yaml)
         "target_modules": [
             "q_proj", "k_proj", "v_proj", "o_proj",
             "gate_proj", "up_proj", "down_proj"
@@ -114,27 +119,8 @@ def save_checkpoint(
 
     # Save README
     readme = f"""# Consolidated PEFT Checkpoint
-
-## Loading
-
-```python
-from peft import PeftModel
-from transformers import AutoModel, BitsAndBytesConfig
-import torch
-
-base_model = AutoModel.from_pretrained(
-    "{config['base_model_name_or_path']}",
-    quantization_config=BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        llm_int8_skip_modules=["code_predictor", "mimi_model", "speaker_projection"],
-    ),
-    device_map="auto",
-    trust_remote_code=True,
-)
-
-model = PeftModel.from_pretrained(base_model, "{output_dir}")
-```
+Load with: `PeftModel.from_pretrained(base_model, "{output_dir}")`
+Base model: {config['base_model_name_or_path']}
 """
     with open(output_dir / "README.md", "w") as f:
         f.write(readme)
@@ -167,7 +153,14 @@ def main():
 
     # Load FSDP checkpoint
     print("\n[2/4] Loading FSDP checkpoint...")
-    state_dict = load_fsdp_checkpoint(checkpoint_path)['model']
+    loaded = load_fsdp_checkpoint(checkpoint_path)
+    # Handle nested state dict (may have 'model' key from FSDP)
+    if "model" in loaded:
+        state_dict = loaded["model"]
+        assert isinstance(state_dict, dict), "Expected 'model' to be a dict"
+    else:
+        state_dict = loaded
+    print(f"  State dict has the following keys: {state_dict.keys()}")
     print(f"  Loaded {len(state_dict)} keys")
 
     # Extract trained weights

@@ -13,7 +13,7 @@ mask_instruction: true
 lora_config:
   use_qlora: true
   thinker:
-    r: 32
+    r: 64
     use_dora: false
     lora_alpha: 64
     # NOTE: MLP projections (gate|up|down_proj) don't match in MoE models like Qwen3-Omni.
@@ -35,7 +35,7 @@ lora_config:
 
 training_args:
   per_device_train_batch_size: 1
-  gradient_accumulation_steps: 2
+  gradient_accumulation_steps: 4
   warmup_ratio: 0.05
   num_train_epochs: 3
   max_steps: -1

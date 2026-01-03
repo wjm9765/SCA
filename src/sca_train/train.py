@@ -295,7 +295,7 @@ def train(config: SCATrainingConfig):
     )
 
     logger.info(config, f"Starting training")
-    trainer.train(resume_from_checkpoint=True)
+    trainer.train(resume_from_checkpoint=False)
 
     if trainer.is_fsdp_enabled:
         logger.info(config, "Converting FSDP state dict to FULL_STATE_DICT for final save")

@@ -247,10 +247,6 @@ def train(config: SCATrainingConfig):
     logger.info(config, f"Starting training")
     trainer.train(resume_from_checkpoint=True)
 
-    if trainer.is_fsdp_enabled:
-        logger.info(config, "Converting FSDP state dict to FULL_STATE_DICT for final save")
-        trainer.accelerator.state.fsdp_plugin.set_state_dict_type("FULL_STATE_DICT")
-
     logger.info(config, f"Saving trained model to {config.train_output_dir.as_posix()}")
     trainer.save_model((config.train_output_dir / "final_model").as_posix())
     logger.info(config, f"Training completed")

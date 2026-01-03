@@ -16,6 +16,8 @@ lora_config:
     r: 32
     use_dora: false
     lora_alpha: 64
+    # NOTE: MLP projections (gate|up|down_proj) don't match in MoE models like Qwen3-Omni.
+    # MoE uses expert-based naming (e.g., mlp.experts.X.gate_proj). Only attention LoRA is applied.
     target_modules_regex: "thinker\\.model\\.layers\\.\\d+\\.(self_attn\\.(q|k|v|o)_proj|mlp\\.(gate|up|down)_proj)$"
     lora_dropout: 0.05
     lora_bias: "none"
@@ -24,6 +26,8 @@ lora_config:
     r: 32
     use_dora: false
     lora_alpha: 64
+    # NOTE: Talker LoRA currently not applied - code_predictor is trained via modules_to_save instead.
+    # MLP projections also don't match MoE naming.
     target_modules_regex: "talker\\.model\\.layers\\.\\d+\\.(self_attn\\.(q|k|v|o)_proj|mlp\\.(gate|up|down)_proj)$"
     lora_dropout: 0.05
     lora_bias: "none"

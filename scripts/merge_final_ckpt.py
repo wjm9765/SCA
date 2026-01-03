@@ -96,11 +96,8 @@ def create_adapter_config(base_model_id: str) -> dict:
         "use_dora": False,
         # Modules to save (trained in full precision)
         "modules_to_save": ["speaker_projection", "talker.code_predictor"],
-        # Target modules (matches the regex patterns in default.yaml)
-        "target_modules": [
-            "q_proj", "k_proj", "v_proj", "o_proj",
-            "gate_proj", "up_proj", "down_proj"
-        ],
+        # Target modules - only attention projections matched in Qwen3-Omni
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
     }
 
 

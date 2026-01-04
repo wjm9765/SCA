@@ -975,8 +975,8 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
             | (sequences_for_mask == self.config.thinker_config.video_token_id)
         ).to(self.talker.device)
         
-        # Adjust im_start_indexes to not exceed embed length
-        im_start_indexes = torch.clamp(im_start_indexes, max=embed_seq_len)
+        # Note: Don't clamp im_start_indexes here - they should stay as-is
+        # The last element points to sequences end, which we'll use for assistant segment
 
         # Get TTS special token embeddings
         talker_special_tokens = torch.tensor(
@@ -1004,25 +1004,31 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         trailing_text_hidden = None
 
         for i in range(len(im_start_indexes) - 1):
-            im_start_index = im_start_indexes[i]
-            segment_end_index = im_start_indexes[i + 1]
+            im_start_index = int(im_start_indexes[i])
+            segment_end_index = int(im_start_indexes[i + 1])
+            is_last_segment = (i == len(im_start_indexes) - 2)
             
-            # Ensure indices don't exceed embed length
-            im_start_index_clamped = min(int(im_start_index), embed_seq_len)
-            segment_end_index_clamped = min(int(segment_end_index), embed_seq_len)
-            
-            # Skip empty segments
-            if im_start_index_clamped >= segment_end_index_clamped:
-                continue
-                
+            # Get role token from original input_ids (before any clamping)
             role_token = input_ids[0][im_start_index + 1]
-
+            
             # Skip system prompts
             if role_token == self.config.system_token_id:
                 continue
             
+            # Historical assistant turns: skip (same as original)
+            if role_token == self.config.assistant_token_id and not is_last_segment:
+                continue
+            
+            # Clamp indices to embed length for actual slicing
+            im_start_index_clamped = min(im_start_index, embed_seq_len)
+            segment_end_index_clamped = min(segment_end_index, embed_seq_len)
+            
+            # For non-assistant segments, skip if empty after clamping
+            if not is_last_segment and im_start_index_clamped >= segment_end_index_clamped:
+                continue
+            
             # User turn: use text projection + hidden projection for multimodal
-            elif role_token == self.config.user_token_id:
+            if role_token == self.config.user_token_id:
                 talker_user_part = self._get_talker_user_parts(
                     im_start_index_clamped,
                     segment_end_index_clamped,
@@ -1035,13 +1041,17 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
                     sequences_for_mask[:, im_start_index_clamped:segment_end_index_clamped]
                 )
             
-            # Current assistant turn (last one): build with speaker embedding
-            elif role_token == self.config.assistant_token_id and i == len(im_start_indexes) - 2:
+            # Current assistant turn (last segment): build with speaker embedding
+            elif role_token == self.config.assistant_token_id and is_last_segment:
+                # For assistant segment, use embed_seq_len as end (not clamped sequence end)
+                # This ensures we include all generated hidden states
+                assistant_end = embed_seq_len
+                
                 if speaker_embedding is not None:
                     # Use speaker embedding for voice cloning
                     assistant_embeds, assistant_ids, trailing_text_hidden = self._get_talker_assistant_parts(
                         im_start_index_clamped,
-                        segment_end_index_clamped,
+                        assistant_end,
                         speaker_embedding,
                         thinker_embed,
                         tts_pad_embed,
@@ -1059,7 +1069,7 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
                         Qwen3OmniMoeForConditionalGeneration._get_talker_assistant_parts(
                             self,
                             im_start_index_clamped,
-                            segment_end_index_clamped,
+                            assistant_end,
                             speaker_id,
                             thinker_embed,
                             tts_pad_embed,
@@ -1070,10 +1080,6 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
                 
                 talker_input_embeds.append(assistant_embeds)
                 talker_input_ids.append(assistant_ids)
-            
-            # Historical assistant turns: skip (same as original)
-            elif role_token == self.config.assistant_token_id and i != len(im_start_indexes) - 2:
-                continue
             
             else:
                 raise AssertionError("Expect role id after <|im_start|> (assistant, user, system)")

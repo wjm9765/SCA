@@ -1,6 +1,4 @@
 #!/usr/bin/env -S uv run
-"""Minimal example: Load Qwen3-Omni with trained LoRA adapter."""
-
 import torch
 from peft import PeftModel
 from sca_train.modeling import Qwen3OmniMoeWithProperForward, Qwen3OmniMoeWithProperForwardConfig
@@ -41,6 +39,5 @@ if __name__ == "__main__":
     model = load_model(
         base_model_id="huihui-ai/Huihui-Qwen3-Omni-30B-A3B-Instruct-abliterated",
         adapter_path="./SCA_finetune/final_consolidated",
-        max_memory={0: "20GB", "cpu": "50GB"},
     )
     print("Model loaded successfully!")

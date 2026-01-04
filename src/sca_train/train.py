@@ -101,6 +101,11 @@ def train(config: SCATrainingConfig):
     )
     logger.debug(config, f"Finished loading model at local rank {local_rank}", rank0_only=False)
 
+    # CRITICAL: Load Mimi model AFTER from_pretrained() to avoid weight corruption
+    logger.info(config, f"Loading Mimi model separately at local rank {local_rank}")
+    model.load_mimi_model()
+    logger.info(config, f"Mimi model loaded successfully at local rank {local_rank}")
+
     logger.debug(config, "Forcing model to bfloat16 to satisfy FSDP uniformity...")
     for param in model.parameters():
         if param.is_floating_point():

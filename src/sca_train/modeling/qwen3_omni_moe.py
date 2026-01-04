@@ -27,6 +27,32 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        
+        # NOTE: mimi_model and mimi_feature_extractor are intentionally NOT loaded here.
+        # They must be loaded AFTER from_pretrained() completes to avoid weight corruption.
+        # Call load_mimi_model() after instantiation to load them properly.
+        self.mimi_model = None
+        self.mimi_feature_extractor = None
+
+        # Projection layer: speaker embedding (192 dim from ECAPA-TDNN) -> talker hidden size
+        # Speaker embeddings are pre-computed in the dataset, not extracted here
+        # This layer is kept in fp16/bf16 (not quantized) via llm_int8_skip_modules in train.py
+        speaker_embed_dim = 192  # ECAPA-TDNN output dimension
+        talker_hidden_size = self.config.talker_config.text_config.hidden_size
+        self.speaker_projection = nn.Linear(speaker_embed_dim, talker_hidden_size)
+    
+    def load_mimi_model(self) -> None:
+        """Load Mimi model and feature extractor.
+        
+        IMPORTANT: This must be called AFTER from_pretrained() to avoid weight corruption.
+        The Mimi model is loaded separately because it's not part of the main checkpoint,
+        and loading it in __init__ causes it to be reinitialized with garbage weights.
+        """
+        if self.mimi_model is not None:
+            print("Warning: Mimi model already loaded, skipping...")
+            return
+        
+        print("Loading Mimi model from kyutai/mimi...")
         self.mimi_feature_extractor = AutoFeatureExtractor.from_pretrained("kyutai/mimi")
         self.mimi_model = MimiModel.from_pretrained(
             "kyutai/mimi",
@@ -36,18 +62,8 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         self.mimi_model.eval()
         for param in self.mimi_model.parameters():
             param.requires_grad = False
-
-        # CRITICAL FIX: Prevent mimi_model from being reinitialized by making its
-        # _init_weights method a no-op. When from_pretrained() calls initialize_weights(),
-        # it will recursively call mimi_model._init_weights() which now does nothing.
-        self.mimi_model._init_weights = lambda module: None
-
-        # Projection layer: speaker embedding (192 dim from ECAPA-TDNN) -> talker hidden size
-        # Speaker embeddings are pre-computed in the dataset, not extracted here
-        # This layer is kept in fp16/bf16 (not quantized) via llm_int8_skip_modules in train.py
-        speaker_embed_dim = 192  # ECAPA-TDNN output dimension
-        talker_hidden_size = self.config.talker_config.text_config.hidden_size
-        self.speaker_projection = nn.Linear(speaker_embed_dim, talker_hidden_size)
+        
+        print("Mimi model loaded successfully!")
 
     def _get_unwrapped_code_predictor(self):
         """Get the code_predictor unwrapped from PEFT's ModulesToSaveWrapper if present.

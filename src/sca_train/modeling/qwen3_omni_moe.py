@@ -64,10 +64,8 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         # Log how many keys we're skipping (useful for debugging)
         skipped_count = len(missing_keys) - len(filtered_missing_keys)
         if skipped_count > 0:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(
-                f"Skipping initialization of {skipped_count} keys from externally loaded modules "
+            print(
+                f"Skipping initialization of {skipped_count} keys from externally loaded modules ",
                 f"({', '.join(self._modules_to_skip_initialization)})"
             )
         

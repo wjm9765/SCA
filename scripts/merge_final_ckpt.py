@@ -50,13 +50,14 @@ def extract_trained_weights(
 ) -> Dict[str, torch.Tensor]:
     """Extract LoRA adapters and modules_to_save from state dict.
     
-    PEFT expects specific key formats:
-    - LoRA weights: base_model.model.<path>.lora_A.default.weight
-    - modules_to_save: base_model.model.<module>.modules_to_save.default.<subpath>
+    PEFT checkpoint format (per official docs, adapter names are STRIPPED on save):
+    - LoRA weights: base_model.model.<path>.lora_A.weight
+    - modules_to_save: base_model.model.<module_path>.<submodule_path>
     
-    For example, if modules_to_save = ['talker.code_predictor']:
-      Input:  base_model.model.talker.code_predictor.lm_head.0.weight
-      Output: base_model.model.talker.code_predictor.modules_to_save.default.lm_head.0.weight
+    Note: When PEFT calls save_pretrained(), it strips adapter-specific parts like
+    '.default' from LoRA keys and '.modules_to_save.default' from modules_to_save.
+    Our FSDP checkpoint already has the correct format - we just need to ensure
+    the base_model.model. prefix exists.
     """
     trained_weights = {}
 
@@ -72,35 +73,15 @@ def extract_trained_weights(
 
         # Check if this is a trained weight
         is_lora = "lora_" in clean_key
-        
-        # Check which module_to_save this belongs to (if any)
-        matched_module = None
-        for m in modules_to_save:
-            if m in clean_key:
-                matched_module = m
-                break
-        is_module_to_save = matched_module is not None
+        is_module_to_save = any(m in clean_key for m in modules_to_save)
 
         if is_lora or is_module_to_save:
             # Ensure 'base_model.model.' prefix exists
             if not clean_key.startswith("base_model.model."):
                 clean_key = "base_model.model." + clean_key
             
-            # For LoRA weights, add '.default' adapter name before .weight
-            if is_lora:
-                # Change: lora_A.weight -> lora_A.default.weight
-                clean_key = clean_key.replace(".lora_A.weight", ".lora_A.default.weight")
-                clean_key = clean_key.replace(".lora_B.weight", ".lora_B.default.weight")
-            elif is_module_to_save and matched_module:
-                # For modules_to_save, insert .modules_to_save.default after the module path
-                # Example: base_model.model.talker.code_predictor.lm_head.0.weight
-                #       -> base_model.model.talker.code_predictor.modules_to_save.default.lm_head.0.weight
-                module_path = f"base_model.model.{matched_module}"
-                if clean_key.startswith(module_path):
-                    # Get the rest of the path after the module
-                    rest = clean_key[len(module_path):]
-                    clean_key = f"{module_path}.modules_to_save.default{rest}"
-            
+            # No additional transformation needed - PEFT checkpoint format
+            # does NOT include adapter names (.default) in saved files
             trained_weights[clean_key] = tensor.to(torch.bfloat16).cpu()
 
     return trained_weights

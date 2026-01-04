@@ -24,6 +24,10 @@ class Qwen3OmniMoeWithProperForwardConfig(Qwen3OmniMoeConfig):
 
 class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
     config_class = Qwen3OmniMoeWithProperForwardConfig
+    
+    # Modules that are loaded separately and should not be re-initialized
+    # when their keys are "missing" from the main checkpoint
+    _modules_to_skip_initialization = ["mimi_model", "mimi_feature_extractor"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -43,6 +47,31 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         speaker_embed_dim = 192  # ECAPA-TDNN output dimension
         talker_hidden_size = self.config.talker_config.text_config.hidden_size
         self.speaker_projection = nn.Linear(speaker_embed_dim, talker_hidden_size)
+
+    def _initialize_missing_keys(self, missing_keys: List[str], is_quantized: bool) -> None:
+        """Override to skip re-initialization of externally loaded modules.
+        
+        The mimi_model is loaded from its own pretrained weights (kyutai/mimi),
+        not from the Qwen checkpoint. When from_pretrained() loads the Qwen weights,
+        it sees mimi_model keys as "missing" and would re-initialize them randomly.
+        This override filters out those keys to preserve the correctly loaded weights.
+        """
+        filtered_missing_keys = [
+            k for k in missing_keys 
+            if not any(skip_module in k for skip_module in self._modules_to_skip_initialization)
+        ]
+        
+        # Log how many keys we're skipping (useful for debugging)
+        skipped_count = len(missing_keys) - len(filtered_missing_keys)
+        if skipped_count > 0:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"Skipping initialization of {skipped_count} keys from externally loaded modules "
+                f"({', '.join(self._modules_to_skip_initialization)})"
+            )
+        
+        super()._initialize_missing_keys(filtered_missing_keys, is_quantized)
 
     def _get_unwrapped_code_predictor(self):
         """Get the code_predictor unwrapped from PEFT's ModulesToSaveWrapper if present.

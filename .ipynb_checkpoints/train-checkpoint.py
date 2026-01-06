@@ -1,4 +1,7 @@
 # train.py
+import os
+os.environ["TORCH_FORCE_LOAD_VULNERABLE"] = "1"
+
 import argparse
 from swift.llm import sft_main
 from src.utils import setup_environment, load_train_args

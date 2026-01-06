@@ -235,3 +235,6 @@ def register_custom_template():
         )
     )
     logger.info(f"✅ Template '{TEMPLATE_NAME}' registered successfully.")
+
+
+register_custom_template()

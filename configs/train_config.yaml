@@ -57,4 +57,7 @@ load_from_cache_file: false
 
 # [DDP 설정]
 ddp_find_unused_parameters: true
-deepspeed: "./ds_config.json"
+#deepspeed: "zero2"
+
+#학습 이어하기
+resume_from_checkpoint: "/workspace/qwen3_omni_sca_result/v17-20251228-143357/checkpoint-800"

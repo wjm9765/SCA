@@ -1,0 +1,4 @@
+Train:   0%|                                                                                              | 0/2598 [00:00<?, ?it/s][INFO:swift] use_logits_to_keep: False
+[INFO:swift] router_aux_loss_coef: 0.0
+Train:   0%|                                                                                   | 2/2598 [02:34<55:07:17, 76.44s/it]
+{'loss': 4.19212055, 'grad_norm': 3.03789353, 'learning_rate': 0.0001, 'token_acc': 0.30625, 'epoch': 0.0, 'global_step/max_steps': '1/2598', 'percentage': '0.04%', 'elapsed_time': '1m 20s', 'remaining_time': '2d 10h 22m 27s', 'memory(GiB)': 34.96, 'train_speed(iter/s)': 0.012358}

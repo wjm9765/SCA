@@ -1,0 +1,51 @@
+{
+  "os":  "Linux-6.5.0-45-generic-x86_64-with-glibc2.35",
+  "python":  "CPython 3.12.12",
+  "startedAt":  "2025-12-28T14:41:32.740161Z",
+  "args":  [
+    "--config",
+    "configs/train_config.yaml"
+  ],
+  "program":  "/workspace/sca_train/train.py",
+  "codePath":  "train.py",
+  "codePathLocal":  "train.py",
+  "git":  {
+    "remote":  "https://github.com/wjm9765/SCA",
+    "commit":  "bf42bf9a4883e8358031678e8d14304d8c9b9242"
+  },
+  "email":  "wjm9765@naver.com",
+  "root":  "/workspace/sca_train",
+  "host":  "7301ca172516",
+  "executable":  "/workspace/qwen/bin/python3.12",
+  "cpu_count":  48,
+  "cpu_count_logical":  96,
+  "gpu":  "NVIDIA A40",
+  "gpu_count":  2,
+  "disk":  {
+    "/":  {
+      "total":  "21474836480",
+      "used":  "171597824"
+    }
+  },
+  "memory":  {
+    "total":  "540643340288"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA A40",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  10752,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-dae77141-7178-4617-6028-e0d9882e88bf"
+    },
+    {
+      "name":  "NVIDIA A40",
+      "memoryTotal":  "48305799168",
+      "cudaCores":  10752,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-e6323e9d-c996-2392-da0b-8e35064130d4"
+    }
+  ],
+  "cudaVersion":  "12.4",
+  "writerId":  "ykm7pip2i7r8x5m7phe2uw2yx7pledhn"
+}

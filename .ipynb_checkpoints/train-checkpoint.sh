@@ -10,8 +10,12 @@ RESUME_VAL=${2:-""}
 NUM_GPUS=2
 MASTER_PORT=29500
 
+export WANDB_PROJECT="SCA_Comedy_Project"
+export WANDB_WATCH="false"
+
 # 명령어 구성
 CMD="train.py --config $CONFIG_PATH"
+
 
 if [ -n "$RESUME_VAL" ]; then
     CMD="$CMD --resume $RESUME_VAL"

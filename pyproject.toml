@@ -104,4 +104,6 @@ dev = [
     "jupyterlab>=4.5.0",
     "matplotlib>=3.10.8",
     "notebook>=7.5.0",
+    "ruff>=0.14.11",
+    "ty>=0.0.11",
 ]

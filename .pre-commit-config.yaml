@@ -9,10 +9,10 @@ repos:
   rev: v0.14.11
   hooks:
     - id: ruff-check
-      args: ["src/", "scripts/", "--fix"]
+      args: ["src/", "scripts/", "tests/", "--fix"]
       types_or: [ python, pyi ]
     - id: ruff-format
-      args: ["src/", "scripts/"]
+      args: ["src/", "scripts/", "tests/"]
       types_or: [ python, pyi ]
 
 #- repo: local

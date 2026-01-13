@@ -20,3 +20,5 @@ repos:
 #    - id: ty
 #      name: ty check
 #      entry: uv run ty check src/ scripts/
+#      language: system
+#      types_or: [ python, pyi ]

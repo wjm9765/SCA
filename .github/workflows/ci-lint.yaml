@@ -1,0 +1,48 @@
+name: ci-lint
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint-and-format-check:
+    runs-on: ubuntu-slim
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install UV
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: venv cache
+        id: sca_main_venv_cache
+        uses: actions/cache@v4
+        with:
+          key: cache-key-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          path: |
+            ./.venv
+
+      - name: Sync venv
+        if: ${{ steps.venv-cache.outputs.cache-hit != 'true' }}
+        run: |
+          uv sync --dev --locked --extra full --extra cpu
+
+      - name: Save venv cache
+        if: ${{ steps.venv-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          key: cache-key-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          path: |
+            ./.venv
+
+      - name: lint
+        run: |
+          uv run ruff check --exit-non-zero-on-fix --no-cache --output-format github src/ scripts/ test/
+
+      - name: format
+        run: |
+          uv run ruff format --check --no-cache --output-format github src/ scripts/ test/

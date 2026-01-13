@@ -356,7 +356,9 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         if not callable(thinker_embeddings):
             # Fallback if it's just weights
             embedding_weights = thinker_embeddings
-            thinker_embeddings = lambda x: F.embedding(x, embedding_weights)
+
+            def thinker_embeddings(x):
+                return F.embedding(x, embedding_weights)
 
         tts_bos_embed, tts_eos_embed, tts_pad_embed = (
             self.talker.text_projection(thinker_embeddings(talker_special_tokens))

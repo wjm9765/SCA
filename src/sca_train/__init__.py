@@ -13,6 +13,7 @@ def __getattr__(name: str):
 
 
 def __dir__():
-    return  __all__
+    return __all__
+
 
 __all__ = ["data_collator", "utils", "config"]

@@ -15,6 +15,15 @@ def __getattr__(name: str):
 
 
 def __dir__():
-    return  __all__
+    return __all__
 
-__all__ = ["config", "loader", "logger", "lora", "train", "SCATrainingConfig", "SCATrainingVerbosityLevel"]
+
+__all__ = [
+    "config",
+    "loader",
+    "logger",
+    "lora",
+    "train",
+    "SCATrainingConfig",
+    "SCATrainingVerbosityLevel",
+]

@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run
 
 import os
+
 os.environ["NCCL_P2P_DISABLE"] = "0"
 os.environ["NCCL_DEBUG"] = "INFO"
 
@@ -16,7 +17,9 @@ def run():
     device = torch.device(f"cuda:{local_rank}")
 
     print(f"[Rank {local_rank}] Initialized. Testing P2P...")
-    tensor = torch.ones(1024 * 1024 * 100, device=device) * (local_rank + 1)  # 100MB tensor
+    tensor = torch.ones(1024 * 1024 * 100, device=device) * (
+        local_rank + 1
+    )  # 100MB tensor
     dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
 
     print(f"[Rank {local_rank}] P2P Success! Tensor[0] = {tensor[0].item()}")

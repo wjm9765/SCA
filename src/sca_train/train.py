@@ -1,4 +1,5 @@
 import os
+
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -25,34 +26,55 @@ from .modeling import Qwen3OmniMoeWithProperForward, Qwen3OmniMoeWithProperForwa
 def train(config: SCATrainingConfig):
     local_rank = get_local_rank()
 
-    logger.debug(config, f"Detected FSDP mode as: {is_fsdp()} at local rank {local_rank}", rank0_only=False)
+    logger.debug(
+        config,
+        f"Detected FSDP mode as: {is_fsdp()} at local rank {local_rank}",
+        rank0_only=False,
+    )
     torch.cuda.set_device(local_rank)
     grad_ckpt = config.gradient_checkpointing
     if is_fsdp():
         device_map = None
         if config.gradient_checkpointing:
             config.gradient_checkpointing = False
-            logger.debug(config, "FSDP detected: Overriding config.gradient_checkpointing to False (Managed by FSDP Config)")
+            logger.debug(
+                config,
+                "FSDP detected: Overriding config.gradient_checkpointing to False (Managed by FSDP Config)",
+            )
     else:
         device_map = {"": local_rank}
-    logger.debug(config, f"Using device map: {device_map} at local rank {local_rank}", rank0_only=False)
+    logger.debug(
+        config,
+        f"Using device map: {device_map} at local rank {local_rank}",
+        rank0_only=False,
+    )
 
-    logger.debug(config, f"Start loading dataset at local rank {local_rank}", rank0_only=False)
+    logger.debug(
+        config, f"Start loading dataset at local rank {local_rank}", rank0_only=False
+    )
     train_dataset = easy_load(
         format="talker_chat",
         cache_dir=config.dataset_cache_dir,
         system_prompt=config.system_prompt,
         instruction_prompt=config.instruction_prompt,
     )
-    logger.debug(config, f"Finished loading dataset at local rank {local_rank}", rank0_only=False)
+    logger.debug(
+        config, f"Finished loading dataset at local rank {local_rank}", rank0_only=False
+    )
 
-    logger.debug(config, f"Start loading processor at local rank {local_rank}", rank0_only=False)
+    logger.debug(
+        config, f"Start loading processor at local rank {local_rank}", rank0_only=False
+    )
     processor = Qwen3OmniMoeProcessor.from_pretrained(
         config.model_id,
         trust_remote_code=True,
         cache_dir=config.hf_home if config.hf_home else None,
     )
-    logger.debug(config, f"Finished loading processor at local rank {local_rank}", rank0_only=False)
+    logger.debug(
+        config,
+        f"Finished loading processor at local rank {local_rank}",
+        rank0_only=False,
+    )
 
     collator = Qwen3OmniCollator(
         processor=processor,
@@ -61,18 +83,26 @@ def train(config: SCATrainingConfig):
         train_talker=True,
     )
 
-    logger.debug(config, f"Start loading model at local rank {local_rank}", rank0_only=False)
+    logger.debug(
+        config, f"Start loading model at local rank {local_rank}", rank0_only=False
+    )
     lora_config = config.lora_config
     bnb_config = None
     if lora_config.use_qlora:
-        logger.info(config, f"Using QLoRA 4-bit quantization")
+        logger.info(config, "Using QLoRA 4-bit quantization")
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=torch.bfloat16,
             bnb_4bit_quant_storage=torch.bfloat16,
-            llm_int8_skip_modules=["code_predictor", "mimi_model", "mimi_feature_extractor", "code2wav", "speaker_projection"],
+            llm_int8_skip_modules=[
+                "code_predictor",
+                "mimi_model",
+                "mimi_feature_extractor",
+                "code2wav",
+                "speaker_projection",
+            ],
         )
         logger.debug(config, f"BitsAndBytesConfig: {bnb_config}")
 
@@ -83,11 +113,15 @@ def train(config: SCATrainingConfig):
     )
     model_config.torch_dtype = torch.bfloat16
     model_config.train_mtp = config.train_mtp
-    
-    if hasattr(model_config, "talker_config") and hasattr(model_config.talker_config, "text_config"):
+
+    if hasattr(model_config, "talker_config") and hasattr(
+        model_config.talker_config, "text_config"
+    ):
         if not hasattr(model_config.talker_config, "vocab_size"):
-            model_config.talker_config.vocab_size = model_config.talker_config.text_config.vocab_size
-    
+            model_config.talker_config.vocab_size = (
+                model_config.talker_config.text_config.vocab_size
+            )
+
     logger.debug(config, f"Model Config: {model_config}")
 
     model = Qwen3OmniMoeWithProperForward.from_pretrained(
@@ -99,7 +133,9 @@ def train(config: SCATrainingConfig):
         attn_implementation=config.attn_impl,
         cache_dir=config.hf_home if config.hf_home else None,
     )
-    logger.debug(config, f"Finished loading model at local rank {local_rank}", rank0_only=False)
+    logger.debug(
+        config, f"Finished loading model at local rank {local_rank}", rank0_only=False
+    )
 
     # CRITICAL: Load Mimi model AFTER from_pretrained() to avoid weight corruption
     logger.info(config, f"Loading Mimi model separately at local rank {local_rank}")
@@ -116,15 +152,15 @@ def train(config: SCATrainingConfig):
             buffer.data = buffer.data.to(torch.bfloat16)
 
     model.requires_grad_(False)
-    
+
     if hasattr(model, "talker") and hasattr(model.talker, "code_predictor"):
         model.talker.code_predictor.requires_grad_(True)
-        logger.debug(config, f"Unfrozen talker.code_predictor (MTP)")
-    
+        logger.debug(config, "Unfrozen talker.code_predictor (MTP)")
+
     if hasattr(model, "speaker_projection"):
         model.speaker_projection.requires_grad_(True)
-        logger.debug(config, f"Unfrozen speaker_projection for voice cloning")
-    
+        logger.debug(config, "Unfrozen speaker_projection for voice cloning")
+
     if hasattr(model, "mimi_model"):
         model.mimi_model.requires_grad_(False)
     if hasattr(model, "code2wav"):
@@ -135,8 +171,9 @@ def train(config: SCATrainingConfig):
         if hasattr(model.thinker, "visual"):
             model.thinker.visual.requires_grad_(False)
 
-
-    logger.debug(config, f"Preparing model for k-bit training, with grad_ckpt={grad_ckpt}")
+    logger.debug(
+        config, f"Preparing model for k-bit training, with grad_ckpt={grad_ckpt}"
+    )
     model.config.thinker_config.text_config.use_cache = False
     model.config.talker_config.text_config.use_cache = False
     model.config.talker_config.code_predictor_config.use_cache = False
@@ -146,19 +183,22 @@ def train(config: SCATrainingConfig):
         gradient_checkpointing_kwargs={"use_reentrant": False} if grad_ckpt else None,
     )
 
-
     # Debug: Log module names before PEFT wrapping (rank 0 only)
     if get_local_rank() == 0:
         logger.debug(config, "Sample module names BEFORE PEFT wrapping:")
         sample_modules = []
         for name, _ in model.named_modules():
-            if ("thinker" in name or "talker" in name) and "self_attn" in name and "proj" in name:
+            if (
+                ("thinker" in name or "talker" in name)
+                and "self_attn" in name
+                and "proj" in name
+            ):
                 sample_modules.append(name)
                 if len(sample_modules) >= 4:  # Show 2 thinker + 2 talker examples
                     break
         for name in sample_modules:
             logger.debug(config, f"  {name}")
-    
+
     peft_config = LoraConfig(
         r=lora_config.r,
         use_dora=lora_config.use_dora,
@@ -169,27 +209,36 @@ def train(config: SCATrainingConfig):
         task_type=lora_config.task_type,
         modules_to_save=lora_config.modules_to_save,
     )
-    
-    logger.debug(config, f"Applying unified LoRA for thinker and talker...")
+
+    logger.debug(config, "Applying unified LoRA for thinker and talker...")
     logger.debug(config, f"  Target_modules regex: {lora_config.target_modules_regex}")
     logger.debug(config, f"  modules_to_save: {lora_config.modules_to_save}")
     model = get_peft_model(model, peft_config)
-    
+
     logger.debug(config, f"Model type after PEFT: {type(model).__name__}")
-    
+
     # Verify LoRA was created (fail-fast if something went wrong)
     if get_local_rank() == 0:
-        lora_count = sum(1 for n, p in model.named_parameters()
-                        if p.requires_grad and "lora_" in n)
-        other_trainable_count = sum(1 for n, p in model.named_parameters()
-                                   if p.requires_grad and "lora_" not in n)
-        
+        lora_count = sum(
+            1 for n, p in model.named_parameters() if p.requires_grad and "lora_" in n
+        )
+        other_trainable_count = sum(
+            1
+            for n, p in model.named_parameters()
+            if p.requires_grad and "lora_" not in n
+        )
+
         logger.debug(config, f"Verification: LoRA parameters: {lora_count}")
-        logger.debug(config, f"Verification: Other trainable parameters (modules_to_save): {other_trainable_count}")
-        
+        logger.debug(
+            config,
+            f"Verification: Other trainable parameters (modules_to_save): {other_trainable_count}",
+        )
+
         if lora_count == 0:
-            raise RuntimeError("CRITICAL: LoRA was not created! Check get_peft_model call and regex.")
-    
+            raise RuntimeError(
+                "CRITICAL: LoRA was not created! Check get_peft_model call and regex."
+            )
+
     if get_local_rank() == 0:
         lora_params = []
         other_params = []
@@ -206,13 +255,17 @@ def train(config: SCATrainingConfig):
             logger.debug(config, f"  {name}")
         if len(lora_params) > entries_to_show:
             logger.debug(config, f"  ... and {len(lora_params) - entries_to_show} more")
-            
-        logger.debug(config, f"Other trainable parameters (modules_to_save): {len(other_params)}")
+
+        logger.debug(
+            config, f"Other trainable parameters (modules_to_save): {len(other_params)}"
+        )
         for name in other_params[:entries_to_show]:
             logger.debug(config, f"  {name}")
         if len(other_params) > entries_to_show:
-            logger.debug(config, f"  ... and {len(other_params) - entries_to_show} more")
-    
+            logger.debug(
+                config, f"  ... and {len(other_params) - entries_to_show} more"
+            )
+
     if get_local_rank() == 0 and config.verbose >= config.verbose.INFO:
         model.print_trainable_parameters()
 
@@ -255,16 +308,18 @@ def train(config: SCATrainingConfig):
         data_collator=collator,
     )
 
-    logger.info(config, f"Starting training")
+    logger.info(config, "Starting training")
     trainer.train(resume_from_checkpoint=False)
 
     if trainer.is_fsdp_enabled:
-        logger.info(config, "Converting FSDP state dict to FULL_STATE_DICT for final save")
+        logger.info(
+            config, "Converting FSDP state dict to FULL_STATE_DICT for final save"
+        )
         trainer.accelerator.state.fsdp_plugin.set_state_dict_type("FULL_STATE_DICT")
 
     logger.info(config, f"Saving trained model to {config.train_output_dir.as_posix()}")
     trainer.save_model((config.train_output_dir / "final_model").as_posix())
-    logger.info(config, f"Training completed")
+    logger.info(config, "Training completed")
 
 
 def main():
@@ -273,7 +328,8 @@ def main():
 
     parser = argparse.ArgumentParser(description="SCA Training Script")
     parser.add_argument(
-        "--config_file", "--config-file",
+        "--config_file",
+        "--config-file",
         type=str,
         required=True,
         help="Path to the training configuration file (JSON or YAML format)",

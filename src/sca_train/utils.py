@@ -1,7 +1,9 @@
 import os
 
 
-def prepare_model_for_kbit_training(model, use_gradient_checkpointing: bool = True, gradient_checkpointing_kwargs = None):
+def prepare_model_for_kbit_training(
+    model, use_gradient_checkpointing: bool = True, gradient_checkpointing_kwargs=None
+):
     if use_gradient_checkpointing:
         if gradient_checkpointing_kwargs is None:
             gradient_checkpointing_kwargs = {"use_reentrant": False}

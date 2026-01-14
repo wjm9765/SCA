@@ -4,7 +4,7 @@ This module provides utilities to generate synthetic DatasetRow instances
 for testing the collator and model without requiring real audio data.
 """
 
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
 import torch
@@ -40,7 +40,7 @@ class MockFeatureExtractor:
         return_tensors: str = "pt",
         padding: bool = False,
         **kwargs,
-    ) -> dict[str, torch.Tensor]:
+    ) -> dict[str, Union[torch.Tensor, np.ndarray]]:
         """Convert raw audio to mock mel spectrogram features.
 
         Args:

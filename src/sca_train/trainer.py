@@ -1,14 +1,16 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from transformers import Trainer
 
 from . import logger
-from .config import SCATrainingConfig
+from .config import SCADuplexTrainingConfig, SCATrainingConfig
 from .utils import get_local_rank
 
 
 class QwenTrainer(Trainer):
-    def __init__(self, config: SCATrainingConfig, *args, **kwargs):
+    def __init__(
+        self, config: Union[SCATrainingConfig, SCADuplexTrainingConfig], *args, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self.config = config
         self.model_accepts_loss_kwargs = False
@@ -87,7 +89,7 @@ class QwenTrainer(Trainer):
 
     def log(
         self, logs: Dict[str, float], start_time: Optional[float] = None, **kwargs
-    ) -> None:  # type: ignore[override]
+    ) -> None:
         """Override log to include individual loss components."""
         # Add individual loss components to the logs
         if self._current_loss_components:

@@ -73,9 +73,9 @@ def load_duplex_dataset(config: SCADuplexTrainingConfig):
         return example
 
     # Apply conversion if needed
-    dataset = dataset.map(maybe_convert_row, desc="Converting to DatasetRow")
+    dataset = dataset.map(maybe_convert_row)
 
-    logger.info(config, f"Dataset loaded with {len(dataset)} samples")
+    logger.info(config, f"Dataset loaded with {len(dataset)} samples")  # type: ignore[arg-type]
     return dataset
 
 
@@ -343,7 +343,7 @@ def train_duplex(config: SCADuplexTrainingConfig):
         logger.info(
             config, "Converting FSDP state dict to FULL_STATE_DICT for final save"
         )
-        trainer.accelerator.state.fsdp_plugin.set_state_dict_type("FULL_STATE_DICT")
+        trainer.accelerator.state.fsdp_plugin.set_state_dict_type("FULL_STATE_DICT")  # type: ignore[union-attr]
 
     logger.info(config, f"Saving trained model to {config.train_output_dir}")
     trainer.save_model(str(config.train_output_dir / "final_model"))

@@ -5,7 +5,7 @@ into batched tensors for training the duplex model.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 import torch
@@ -14,18 +14,6 @@ from sca_train.data_types import DatasetRow
 
 if TYPE_CHECKING:
     from transformers import Qwen3OmniMoeProcessor
-
-
-class FeatureExtractorProtocol(Protocol):
-    """Protocol for feature extractors that produce mel spectrograms."""
-
-    def __call__(
-        self,
-        raw_speech: np.ndarray,
-        sampling_rate: int,
-        return_tensors: str,
-        padding: bool,
-    ) -> dict[str, torch.Tensor]: ...
 
 
 # TODO: Replace with actual silence token ID from global config once defined
@@ -103,8 +91,10 @@ class FullDuplexCollator:
         self.max_length = max_length
         self.max_segments_per_batch = max_segments_per_batch
 
-        # Use the feature extractor from the processor (AuT/Whisper-style)
-        self.feature_extractor = processor.feature_extractor
+        # Use the feature extractor from the processor (AuT-style)
+        self.feature_extractor: Callable[..., dict[str, Any]] = (
+            processor.feature_extractor
+        )
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
         """Collate a batch of features into model inputs.

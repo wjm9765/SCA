@@ -33,8 +33,12 @@ jobs:
 
       - name: lint
         run: |
-          uv run ruff check --exit-non-zero-on-fix --no-cache --output-format github src/ scripts/
+          uv run ruff check --exit-non-zero-on-fix --no-cache --output-format github src/ scripts/ tests/
 
       - name: format
         run: |
-          uv run ruff format --check --no-cache --output-format github src/ scripts/
+          uv run ruff format --check --no-cache --output-format github src/ scripts/ tests/
+
+      - name: type-check
+        run: |
+          uv run ty check --output-format github --error-on-warning src/ scripts/ tests/

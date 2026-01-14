@@ -15,10 +15,10 @@ repos:
       args: ["src/", "scripts/", "tests/"]
       types_or: [ python, pyi ]
 
-#- repo: local
-#  hooks:
-#    - id: ty
-#      name: ty check
-#      entry: uv run ty check src/ scripts/
-#      language: system
-#      types_or: [ python, pyi ]
+- repo: local
+  hooks:
+    - id: ty
+      name: ty check
+      entry: uv run ty check src/ scripts/ tests/
+      language: system
+      types_or: [ python, pyi ]

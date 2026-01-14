@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 import torch
 from transformers import Qwen3OmniMoeProcessor
@@ -14,7 +16,7 @@ class Qwen3OmniCollator:
         max_length: int = 32768,
         train_talker: bool = False,
     ):
-        self.processor = processor
+        self.processor: Any = processor
         self.mask_instruction = mask_instruction
         self.max_length = max_length
         self.train_talker = train_talker
@@ -22,10 +24,12 @@ class Qwen3OmniCollator:
         assert hasattr(processor, "tokenizer"), (
             "Processor must have a tokenizer attribute"
         )
-        self.pad_token_id = processor.tokenizer.pad_token_id
-        self.im_start_id = None
+        self.pad_token_id: int | None = processor.tokenizer.pad_token_id  # type: ignore[union-attr]
+        self.im_start_id: int | None = None
 
-        im_tokens = processor.tokenizer.encode("<|im_start|>", add_special_tokens=False)
+        im_tokens: list[int] = processor.tokenizer.encode(  # type: ignore[union-attr]
+            "<|im_start|>", add_special_tokens=False
+        )
         if len(im_tokens) > 0:
             self.im_start_id = im_tokens[0]
 

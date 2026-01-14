@@ -149,13 +149,13 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         Returns:
             Codes tensor [batch, 16, num_frames].
         """
-        if self.mimi_model is None:
+        if self.mimi_model is None or self.mimi_feature_extractor is None:
             raise RuntimeError("Mimi model not loaded. Call load_mimi_model() first.")
 
         # Ensure mimi_model is on correct device
         mimi_device = next(self.mimi_model.parameters()).device
         if mimi_device != self.device:
-            self.mimi_model = self.mimi_model.to(self.device)
+            self.mimi_model = self.mimi_model.to(self.device)  # type: ignore[arg-type]
 
         processed_audios = []
         for audio in audios:
@@ -647,7 +647,7 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             self._last_talker_loss = torch.tensor(0.0, device=self.device)
             self._last_mtp_loss = torch.tensor(0.0, device=self.device)
             return CausalLMOutputWithPast(
-                loss=thinker_loss,
+                loss=thinker_loss,  # type: ignore[arg-type]
                 logits=thinker_outputs.logits,
                 past_key_values=thinker_outputs.past_key_values,
                 hidden_states=thinker_outputs.hidden_states,
@@ -694,7 +694,7 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         self._last_mtp_loss = avg_mtp_loss.detach()
 
         return CausalLMOutputWithPast(
-            loss=total_loss,
+            loss=total_loss,  # type: ignore[arg-type]
             logits=thinker_outputs.logits,
             past_key_values=thinker_outputs.past_key_values,
             hidden_states=thinker_outputs.hidden_states,

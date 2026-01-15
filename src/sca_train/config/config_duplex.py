@@ -31,17 +31,12 @@ class SCADuplexTrainingConfig(BaseModel):
     max_length: int = 32768
 
     # Duplex-specific token IDs
-    # TODO: Replace with actual silence token ID once defined by dataset team
-    silence_token_id: int = 151700  # Placeholder
+    silence_token_id: int = 151646  # Silence token for Qwen3-Omni
     audio_token_id: int = 151675  # From config.thinker_config.audio_token_id
     pad_token_id: int = 151643  # Standard Qwen pad token
 
     # Duplex training settings
     max_segments_per_batch: int = 8
-
-    # Dataset settings
-    dataset_name: Optional[str] = None  # HuggingFace dataset name
-    dataset_split: str = "train"
 
     # LoRA and training args
     lora_config: SCALoraConfig = SCALoraConfig()

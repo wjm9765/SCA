@@ -17,14 +17,13 @@ from pathlib import Path
 
 import torch
 import yaml
-from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
+from sca_data.dataset_utils import easy_load
 from transformers import BitsAndBytesConfig, Qwen3OmniMoeProcessor, TrainingArguments
 
 from sca_train import logger
 from sca_train.config import SCADuplexTrainingConfig
 from sca_train.data_collator_duplex import FullDuplexCollator
-from sca_train.data_types import DatasetRow
 from sca_train.modeling import Qwen3OmniDuplexConfig, Qwen3OmniDuplexModel
 from sca_train.trainer import QwenTrainer
 from sca_train.utils import get_local_rank, is_fsdp, prepare_model_for_kbit_training
@@ -38,44 +37,13 @@ def load_duplex_config(config_path: Path) -> SCADuplexTrainingConfig:
 
 
 def load_duplex_dataset(config: SCADuplexTrainingConfig):
-    """Load the duplex dataset from HuggingFace.
+    """Load the duplex dataset using easy_load.
 
-    The dataset should return dicts with "dataset_row" key containing DatasetRow.
+    Returns HuggingFace Dataset with "dataset_row_obj" key containing DatasetRow.
     """
-    if config.dataset_name is None:
-        raise ValueError(
-            "dataset_name must be set in config. "
-            "Please provide the HuggingFace dataset name."
-        )
-
-    logger.info(config, f"Loading dataset: {config.dataset_name}")
-    dataset = load_dataset(
-        config.dataset_name,
-        split=config.dataset_split,
-        cache_dir=str(config.dataset_cache_dir) if config.dataset_cache_dir else None,
-    )
-
-    # The dataset should already return DatasetRow in "dataset_row" key
-    # If it returns raw dicts, we need to convert them
-    def maybe_convert_row(example):
-        """Convert raw dict to DatasetRow if needed."""
-        row = example.get("dataset_row")
-        if row is None:
-            raise ValueError(
-                "Dataset must return 'dataset_row' key with DatasetRow or compatible dict."
-            )
-        if isinstance(row, DatasetRow):
-            return example
-        if isinstance(row, dict):
-            # Reconstruct DatasetRow from dict
-            # This handles serialized DatasetRow from HuggingFace
-            example["dataset_row"] = DatasetRow(**row)
-        return example
-
-    # Apply conversion if needed
-    dataset = dataset.map(maybe_convert_row)
-
-    logger.info(config, f"Dataset loaded with {len(dataset)} samples")  # type: ignore[arg-type]
+    logger.info(config, "Loading duplex dataset via easy_load...")
+    dataset = easy_load(format="duplex")
+    logger.info(config, f"Dataset loaded with {len(dataset)} samples")
     return dataset
 
 

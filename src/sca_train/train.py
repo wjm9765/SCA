@@ -4,6 +4,8 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import gc
+from pathlib import Path
+
 import torch
 from peft import LoraConfig, get_peft_model
 from transformers import (
@@ -54,7 +56,7 @@ def train(config: SCATrainingConfig):
     )
     train_dataset = easy_load(
         format="talker_chat",
-        cache_dir=config.dataset_cache_dir,
+        cache_dir=config.dataset_cache_dir or Path("./dataset"),
         system_prompt=config.system_prompt,
         instruction_prompt=config.instruction_prompt,
     )

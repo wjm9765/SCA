@@ -9,15 +9,14 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 import torch
-
-from sca_train.data_types import DatasetRow
+from sca_data.dataset_utils import DatasetRow
 
 if TYPE_CHECKING:
     from transformers import Qwen3OmniMoeProcessor
 
 
-# TODO: Replace with actual silence token ID from global config once defined
-PLACEHOLDER_SILENCE_TOKEN_ID = 151700
+# Silence token ID for Qwen3-Omni
+SILENCE_TOKEN_ID = 151646
 
 # Expected dimensions
 SPEAKER_EMBEDDING_DIM = 192
@@ -100,7 +99,7 @@ class FullDuplexCollator:
         """Collate a batch of features into model inputs.
 
         Args:
-            features: List of dicts with "dataset_row" key containing DatasetRow.
+            features: List of dicts with "dataset_row_obj" key containing DatasetRow.
 
         Returns:
             Batched dict with:
@@ -115,14 +114,7 @@ class FullDuplexCollator:
         # Extract DatasetRow from each feature
         rows: list[DatasetRow] = []
         for feature in features:
-            row = feature["dataset_row"]
-            if not isinstance(row, DatasetRow):
-                raise TypeError(
-                    f"Expected DatasetRow, got {type(row)}. "
-                    "Ensure dataset returns {'dataset_row': DatasetRow}."
-                )
-            # Validate each row
-            row.validate(silence_token_id=self.silence_token_id)
+            row = feature["dataset_row_obj"]
             rows.append(row)
 
         # 1. Build input_ids and labels

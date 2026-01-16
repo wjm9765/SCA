@@ -2,7 +2,6 @@
 # This config is for training Qwen3-Omni on interleaved audio-text data
 
 hf_home: "./.hf_models"
-dataset_cache_dir: "./dataset"
 model_id: "huihui-ai/Huihui-Qwen3-Omni-30B-A3B-Instruct-abliterated"
 train_output_dir: "./SCA_duplex_finetune"
 verbose: 4
@@ -15,17 +14,12 @@ mtp_weight: 2.0
 max_length: 32768
 
 # Duplex-specific token IDs
-# TODO: Update silence_token_id once defined by dataset team
-silence_token_id: 151700  # Placeholder
+silence_token_id: 151646
 audio_token_id: 151675
 pad_token_id: 151643
 
 # Duplex training settings
 max_segments_per_batch: 8
-
-# Dataset settings
-dataset_name: null  # Set to your HuggingFace dataset name
-dataset_split: "train"
 
 # LoRA configuration
 lora_config:

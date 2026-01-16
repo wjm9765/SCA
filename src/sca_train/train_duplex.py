@@ -28,6 +28,28 @@ from sca_train.modeling import Qwen3OmniDuplexConfig, Qwen3OmniDuplexModel
 from sca_train.trainer import QwenTrainer
 from sca_train.utils import get_local_rank, is_fsdp, prepare_model_for_kbit_training
 
+# Apply Liger Kernel patches BEFORE model loading (only on Linux where it's available)
+import sys
+
+if sys.platform == "linux":
+    try:
+        from liger_kernel.transformers import apply_liger_kernel_to_qwen3_moe
+
+        apply_liger_kernel_to_qwen3_moe(
+            rope=True,
+            cross_entropy=False,  # Must be False when using fused_linear_cross_entropy
+            fused_linear_cross_entropy=True,  # KEY: avoids materializing full logits tensor
+            rms_norm=True,
+            swiglu=True,
+        )
+        print(
+            "[Liger] Kernel patches applied for Qwen3-MoE (fused_linear_cross_entropy=True)"
+        )
+    except ImportError:
+        print(
+            "[Liger] Warning: liger-kernel not available, running without optimizations"
+        )
+
 
 def load_duplex_config(config_path: Path) -> SCADuplexTrainingConfig:
     """Load duplex training configuration from YAML file."""

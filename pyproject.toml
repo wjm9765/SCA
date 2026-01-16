@@ -116,3 +116,7 @@ dev = [
     "ruff>=0.14.11",
     "ty>=0.0.11",
 ]
+
+[tool.ty.rules]
+# Ignore unresolved imports globally (e.g., liger-kernel only available on Linux)
+unresolved-import = "ignore"

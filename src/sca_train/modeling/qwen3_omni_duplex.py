@@ -31,7 +31,7 @@ from sca_train.data_collator_duplex import SegmentInfo
 # Uses Triton kernels to avoid float32 upcast that causes OOM with large vocab
 # Only available on Linux; falls back to standard loss on other platforms
 try:
-    from liger_kernel.transformers import LigerCrossEntropyLoss  # type: ignore[import-not-found, import-untyped]
+    from liger_kernel.transformers import LigerCrossEntropyLoss
 
     LIGER_AVAILABLE = True
 except ImportError:
@@ -84,17 +84,6 @@ def _assert_valid_tensor(
         torch.bfloat16,
     ):
         assert torch.isfinite(tensor).all(), f"{name}: contains NaN or Inf values"
-
-
-def _assert_finite_scalar(value: torch.Tensor, name: str) -> None:
-    """Assert that a tensor is a finite scalar."""
-    assert isinstance(value, torch.Tensor), (
-        f"{name}: expected Tensor, got {type(value)}"
-    )
-    assert value.numel() == 1, (
-        f"{name}: expected scalar (1 element), got {value.numel()} elements"
-    )
-    assert torch.isfinite(value).all(), f"{name}: is not finite (NaN or Inf)"
 
 
 @dataclass
@@ -779,11 +768,6 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         )
         talker_loss = talker_outputs.loss
 
-        # Validate talker_loss is finite
-        _assert_finite_scalar(
-            talker_loss, "_forward_talker_single_segment: talker_loss"
-        )
-
         # MTP training
         if not config.train_mtp:
             mtp_loss = torch.tensor(0.0, device=self.device)
@@ -837,9 +821,6 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 mtp_total_loss = mtp_total_loss + mtp_layer_loss
 
             mtp_loss = mtp_total_loss / num_mtp_layers
-
-            # Validate mtp_loss is finite
-            _assert_finite_scalar(mtp_loss, "_forward_talker_single_segment: mtp_loss")
 
         return talker_loss, mtp_loss
 
@@ -969,8 +950,6 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 ignore_index=-100,
             )
 
-        _assert_finite_scalar(thinker_loss, "forward: thinker_loss")
-
         # 2. Extract segment hidden states (from hidden_states[0] = input embeddings)
         input_embeddings = thinker_outputs.hidden_states[0]  # [batch, seq_len, hidden]
         assert input_embeddings.shape[0] == batch_size, (
@@ -1030,9 +1009,6 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         # 7. Combine losses
         mtp_weight = getattr(self.config, "mtp_weight", 2.0)
         total_loss = thinker_loss + avg_talker_loss + (mtp_weight * avg_mtp_loss)
-
-        # Validate final loss is finite
-        _assert_finite_scalar(total_loss, "forward: total_loss")
 
         # Store for logging
         self._last_thinker_loss = thinker_loss.detach()

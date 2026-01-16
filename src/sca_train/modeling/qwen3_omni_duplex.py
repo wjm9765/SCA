@@ -988,10 +988,10 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             self._last_mtp_loss = torch.tensor(0.0, device=self.device)
             return CausalLMOutputWithPast(
                 loss=thinker_loss,  # type: ignore[arg-type]
-                logits=thinker_outputs.logits,
-                past_key_values=thinker_outputs.past_key_values,
-                hidden_states=thinker_outputs.hidden_states,
-                attentions=thinker_outputs.attentions,
+                logits=None,  # Don't return logits - causes OOM when Accelerate converts to fp32
+                past_key_values=None,
+                hidden_states=None,
+                attentions=None,
             )
 
         # 4. Encode target audios
@@ -1041,8 +1041,8 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         return CausalLMOutputWithPast(
             loss=total_loss,  # type: ignore[arg-type]
-            logits=thinker_outputs.logits,
-            past_key_values=thinker_outputs.past_key_values,
-            hidden_states=thinker_outputs.hidden_states,
-            attentions=thinker_outputs.attentions,
+            logits=None,  # Don't return logits - causes OOM when Accelerate converts to fp32
+            past_key_values=None,
+            hidden_states=None,
+            attentions=None,
         )

@@ -27,6 +27,65 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from sca_train.data_collator_duplex import SegmentInfo
 
+# Constants for validation
+SPEAKER_EMBEDDING_DIM = 192
+TARGET_AUDIO_SAMPLE_RATE = 24000
+
+
+def _assert_valid_tensor(
+    tensor: torch.Tensor,
+    expected_shape: tuple[int, ...] | None = None,
+    expected_dtype: torch.dtype | None = None,
+    name: str = "tensor",
+    check_finite: bool = True,
+) -> None:
+    """Assert that a tensor is valid.
+
+    Args:
+        tensor: Tensor to validate.
+        expected_shape: Expected shape (use -1 for any dimension).
+        expected_dtype: Expected dtype.
+        name: Name for error messages.
+        check_finite: Whether to check for NaN/Inf (only for float tensors).
+    """
+    assert isinstance(tensor, torch.Tensor), (
+        f"{name}: expected Tensor, got {type(tensor)}"
+    )
+
+    if expected_shape is not None:
+        assert len(tensor.shape) == len(expected_shape), (
+            f"{name}: expected {len(expected_shape)}D, got {len(tensor.shape)}D with shape {tensor.shape}"
+        )
+        for i, (actual, expected) in enumerate(zip(tensor.shape, expected_shape)):
+            if expected != -1:
+                assert actual == expected, (
+                    f"{name}: dim {i} expected {expected}, got {actual} (full shape: {tensor.shape})"
+                )
+
+    if expected_dtype is not None:
+        assert tensor.dtype == expected_dtype, (
+            f"{name}: expected {expected_dtype}, got {tensor.dtype}"
+        )
+
+    if check_finite and tensor.dtype in (
+        torch.float16,
+        torch.float32,
+        torch.float64,
+        torch.bfloat16,
+    ):
+        assert torch.isfinite(tensor).all(), f"{name}: contains NaN or Inf values"
+
+
+def _assert_finite_scalar(value: torch.Tensor, name: str) -> None:
+    """Assert that a tensor is a finite scalar."""
+    assert isinstance(value, torch.Tensor), (
+        f"{name}: expected Tensor, got {type(value)}"
+    )
+    assert value.numel() == 1, (
+        f"{name}: expected scalar (1 element), got {value.numel()} elements"
+    )
+    assert torch.isfinite(value).all(), f"{name}: is not finite (NaN or Inf)"
+
 
 @dataclass
 class DuplexSegmentBatch:
@@ -123,6 +182,19 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         for param in self.mimi_model.parameters():
             param.requires_grad = False
 
+        # Validate Mimi model loaded correctly
+        assert self.mimi_model is not None, "Mimi model failed to load"
+        assert self.mimi_feature_extractor is not None, (
+            "Mimi feature extractor failed to load"
+        )
+        assert not self.mimi_model.training, "Mimi model should be in eval mode"
+
+        # Verify all parameters are frozen
+        for name, param in self.mimi_model.named_parameters():
+            assert not param.requires_grad, (
+                f"Mimi parameter {name} should be frozen (requires_grad=False)"
+            )
+
         print("Mimi model loaded successfully!")
 
     def _get_unwrapped_code_predictor(self):
@@ -149,6 +221,11 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         Returns:
             Codes tensor [batch, 16, num_frames].
         """
+        assert isinstance(audios, list), (
+            f"_encode_audio_to_codes: audios must be list, got {type(audios)}"
+        )
+        assert len(audios) > 0, "_encode_audio_to_codes: audios list is empty"
+
         if self.mimi_model is None or self.mimi_feature_extractor is None:
             raise RuntimeError("Mimi model not loaded. Call load_mimi_model() first.")
 
@@ -158,15 +235,30 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             self.mimi_model = self.mimi_model.to(self.device)  # type: ignore[arg-type]
 
         processed_audios = []
-        for audio in audios:
+        for i, audio in enumerate(audios):
+            assert isinstance(audio, np.ndarray), (
+                f"_encode_audio_to_codes: audio[{i}] expected ndarray, got {type(audio)}"
+            )
+            assert np.isfinite(audio).all(), (
+                f"_encode_audio_to_codes: audio[{i}] contains NaN or Inf"
+            )
             if audio.ndim > 1:
                 audio = audio.mean(axis=1)
+            assert audio.ndim == 1, (
+                f"_encode_audio_to_codes: audio[{i}] expected 1D after processing, got {audio.ndim}D"
+            )
             processed_audios.append(audio)
 
         audio_inputs = self.mimi_feature_extractor(
-            processed_audios, sampling_rate=24000, return_tensors="pt", padding=True
+            processed_audios,
+            sampling_rate=TARGET_AUDIO_SAMPLE_RATE,
+            return_tensors="pt",
+            padding=True,
         )
 
+        assert "input_values" in audio_inputs, (
+            "_encode_audio_to_codes: feature_extractor did not return 'input_values'"
+        )
         audio_tensor = audio_inputs["input_values"].to(
             device=self.device,
             dtype=self.mimi_model.dtype,
@@ -174,6 +266,10 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         if audio_tensor.ndim == 2:
             audio_tensor = audio_tensor.unsqueeze(1)
+
+        assert audio_tensor.ndim == 3, (
+            f"_encode_audio_to_codes: audio_tensor expected 3D, got {audio_tensor.ndim}D with shape {audio_tensor.shape}"
+        )
 
         with torch.no_grad():
             output = self.mimi_model.encode(audio_tensor)
@@ -187,12 +283,27 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         if not isinstance(codes, torch.Tensor):
             raise ValueError(f"Expected Tensor from mimi encode, got {type(codes)}")
 
+        # Validate output codes shape: [batch, num_quantizers, num_frames]
+        batch_size = len(audios)
+        assert codes.ndim == 3, (
+            f"_encode_audio_to_codes: codes expected 3D, got {codes.ndim}D with shape {codes.shape}"
+        )
+        assert codes.shape[0] == batch_size, (
+            f"_encode_audio_to_codes: codes batch size {codes.shape[0]} != expected {batch_size}"
+        )
+
         return codes
 
     def _align_codebook_dim(self, codes: torch.Tensor) -> torch.Tensor:
         """Align codebook dimension to expected number of quantizers."""
+        assert codes.ndim == 3, (
+            f"_align_codebook_dim: codes expected 3D, got {codes.ndim}D"
+        )
+
         target_quantizers = self.code2wav.config.num_quantizers
-        assert target_quantizers is not None
+        assert target_quantizers is not None, (
+            "_align_codebook_dim: num_quantizers is None"
+        )
 
         current = codes.shape[1]
         if current == target_quantizers:
@@ -201,7 +312,12 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             raise ValueError(
                 f"Mimi codes have {current} quantizers but model expects {target_quantizers}."
             )
-        return codes[:, :target_quantizers, :]
+
+        result = codes[:, :target_quantizers, :]
+        assert result.shape[1] == target_quantizers, (
+            f"_align_codebook_dim: result has {result.shape[1]} quantizers, expected {target_quantizers}"
+        )
+        return result
 
     def _extract_segment_hidden_states(
         self,
@@ -223,21 +339,40 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 - segment_lengths: List of segment lengths.
                 - seg_to_batch: List mapping segment to batch index.
         """
+        # Validate inputs
+        assert input_embeddings.ndim == 3, (
+            f"_extract_segment_hidden_states: input_embeddings expected 3D, got {input_embeddings.ndim}D"
+        )
+        batch_size, seq_len, hidden_dim = input_embeddings.shape
+        assert len(segment_info) == batch_size, (
+            f"_extract_segment_hidden_states: segment_info length {len(segment_info)} != batch_size {batch_size}"
+        )
+
         segment_hidden = []
         segment_lengths = []
         seg_to_batch = []
 
         for batch_idx, sample_segments in enumerate(segment_info):
-            for seg in sample_segments:
+            for seg_idx, seg in enumerate(sample_segments):
                 # Extract hidden states at text_token_idxs
                 idxs = seg.text_token_idxs
                 if not idxs:
                     continue
 
+                # Validate indices are within sequence bounds
+                for idx_pos, idx_val in enumerate(idxs):
+                    assert 0 <= idx_val < seq_len, (
+                        f"_extract_segment_hidden_states: batch[{batch_idx}].segment[{seg_idx}].text_token_idxs[{idx_pos}] = {idx_val} out of bounds [0, {seq_len})"
+                    )
+
                 # Get embeddings at segment positions
                 # idxs is a list of indices into the sequence
                 seg_emb = input_embeddings[batch_idx, idxs, :]  # [seg_len, hidden_dim]
                 seg_emb = seg_emb.unsqueeze(0)  # [1, seg_len, hidden_dim]
+
+                assert seg_emb.shape == (1, len(idxs), hidden_dim), (
+                    f"_extract_segment_hidden_states: seg_emb shape {seg_emb.shape} != expected (1, {len(idxs)}, {hidden_dim})"
+                )
 
                 segment_hidden.append(seg_emb)
                 segment_lengths.append(len(idxs))
@@ -275,11 +410,26 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         codes = self._encode_audio_to_codes(all_audios).long()
         aligned_codes = self._align_codebook_dim(codes)
 
+        # Validate aligned_codes
+        assert aligned_codes.shape[0] == len(all_audios), (
+            f"_encode_segment_audios: aligned_codes batch {aligned_codes.shape[0]} != num_audios {len(all_audios)}"
+        )
+
         # Split back to individual segments
         for i in range(len(all_audios)):
             seg_codes = aligned_codes[i : i + 1]  # [1, 16, num_frames]
+            assert seg_codes.ndim == 3, (
+                f"_encode_segment_audios: seg_codes[{i}] expected 3D, got {seg_codes.ndim}D"
+            )
+            assert seg_codes.shape[0] == 1, (
+                f"_encode_segment_audios: seg_codes[{i}] batch dim expected 1, got {seg_codes.shape[0]}"
+            )
             segment_codes.append(seg_codes)
             code_lengths.append(seg_codes.shape[2])
+
+        assert len(segment_codes) == len(all_audios), (
+            f"_encode_segment_audios: output length {len(segment_codes)} != num_audios {len(all_audios)}"
+        )
 
         return segment_codes, code_lengths
 
@@ -297,11 +447,34 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         Returns:
             [num_segments, 192] speaker embeddings.
         """
+        # Validate inputs
+        assert speaker_embeddings.ndim == 2, (
+            f"_expand_speaker_to_segments: speaker_embeddings expected 2D, got {speaker_embeddings.ndim}D"
+        )
+        assert speaker_embeddings.shape[1] == SPEAKER_EMBEDDING_DIM, (
+            f"_expand_speaker_to_segments: speaker_embeddings dim {speaker_embeddings.shape[1]} != {SPEAKER_EMBEDDING_DIM}"
+        )
+
         if not seg_to_batch:
-            return torch.empty(0, 192, device=self.device)
+            return torch.empty(0, SPEAKER_EMBEDDING_DIM, device=self.device)
+
+        # Validate indices are within bounds
+        batch_size = speaker_embeddings.shape[0]
+        for i, idx in enumerate(seg_to_batch):
+            assert 0 <= idx < batch_size, (
+                f"_expand_speaker_to_segments: seg_to_batch[{i}] = {idx} out of bounds [0, {batch_size})"
+            )
 
         indices = torch.tensor(seg_to_batch, device=self.device)
-        return speaker_embeddings[indices]
+        result = speaker_embeddings[indices]
+
+        # Validate output
+        num_segments = len(seg_to_batch)
+        assert result.shape == (num_segments, SPEAKER_EMBEDDING_DIM), (
+            f"_expand_speaker_to_segments: result shape {result.shape} != expected ({num_segments}, {SPEAKER_EMBEDDING_DIM})"
+        )
+
+        return result
 
     def _build_duplex_talker_prefix(
         self,
@@ -322,6 +495,20 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         Returns:
             Tuple of (prefix_embed, trailing_text_hidden, tts_pad_embed).
         """
+        # Validate inputs
+        assert segment_hidden.ndim == 3, (
+            f"_build_duplex_talker_prefix: segment_hidden expected 3D, got {segment_hidden.ndim}D"
+        )
+        assert segment_hidden.shape[0] == 1, (
+            f"_build_duplex_talker_prefix: segment_hidden batch expected 1, got {segment_hidden.shape[0]}"
+        )
+        assert speaker_embedding.ndim == 2, (
+            f"_build_duplex_talker_prefix: speaker_embedding expected 2D, got {speaker_embedding.ndim}D"
+        )
+        assert speaker_embedding.shape == (1, SPEAKER_EMBEDDING_DIM), (
+            f"_build_duplex_talker_prefix: speaker_embedding shape {speaker_embedding.shape} != expected (1, {SPEAKER_EMBEDDING_DIM})"
+        )
+
         config = self.config
         hidden_dim = segment_hidden.shape[2]
 
@@ -421,6 +608,14 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             dim=1,
         )
 
+        # Validate outputs
+        assert prefix_embed.shape[0] == 1, (
+            f"_build_duplex_talker_prefix: prefix_embed batch expected 1, got {prefix_embed.shape[0]}"
+        )
+        assert prefix_embed.shape[1] == 9, (
+            f"_build_duplex_talker_prefix: prefix_embed seq_len expected 9, got {prefix_embed.shape[1]}"
+        )
+
         return prefix_embed, trailing_text_hidden, tts_pad_embed
 
     def _forward_talker_single_segment(
@@ -439,6 +634,17 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         Returns:
             Tuple of (talker_loss, mtp_loss).
         """
+        # Validate inputs
+        assert segment_hidden.ndim == 3 and segment_hidden.shape[0] == 1, (
+            f"_forward_talker_single_segment: segment_hidden expected [1, seg_len, hidden_dim], got {segment_hidden.shape}"
+        )
+        assert speaker_embedding.ndim == 2 and speaker_embedding.shape[0] == 1, (
+            f"_forward_talker_single_segment: speaker_embedding expected [1, 192], got {speaker_embedding.shape}"
+        )
+        assert target_codes.ndim == 3 and target_codes.shape[0] == 1, (
+            f"_forward_talker_single_segment: target_codes expected [1, num_q, num_frames], got {target_codes.shape}"
+        )
+
         config = self.config
 
         # Build prefix
@@ -449,6 +655,9 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         # Get layer 0 codes
         layer0_codes = target_codes[:, 0, :]  # [1, num_frames]
         num_codec_tokens = layer0_codes.shape[1]
+        assert num_codec_tokens > 0, (
+            "_forward_talker_single_segment: num_codec_tokens is 0"
+        )
 
         # Get embeddings for all layers (for teacher forcing)
         layer0_embeddings = self.talker.get_input_embeddings()(
@@ -519,6 +728,11 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             [prefix_mask, label_code0, label_code_rest, label_eos], dim=1
         )
 
+        # Validate labels length matches inputs
+        assert labels.shape[1] == full_inputs_embeds.shape[1], (
+            f"_forward_talker_single_segment: labels length {labels.shape[1]} != inputs length {full_inputs_embeds.shape[1]}"
+        )
+
         # Attention mask (all ones for single segment)
         seq_len = full_inputs_embeds.shape[1]
         attention_mask = torch.ones((1, seq_len), dtype=torch.long, device=self.device)
@@ -538,6 +752,11 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             output_hidden_states=True,
         )
         talker_loss = talker_outputs.loss
+
+        # Validate talker_loss is finite
+        _assert_finite_scalar(
+            talker_loss, "_forward_talker_single_segment: talker_loss"
+        )
 
         # MTP training
         if not config.train_mtp:
@@ -593,6 +812,9 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
             mtp_loss = mtp_total_loss / num_mtp_layers
 
+            # Validate mtp_loss is finite
+            _assert_finite_scalar(mtp_loss, "_forward_talker_single_segment: mtp_loss")
+
         return talker_loss, mtp_loss
 
     def forward(
@@ -621,6 +843,32 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         Returns:
             CausalLMOutputWithPast with combined loss.
         """
+        # Validate inputs
+        assert input_ids.ndim == 2, (
+            f"forward: input_ids expected 2D, got {input_ids.ndim}D"
+        )
+        batch_size, seq_len = input_ids.shape
+
+        assert attention_mask.shape == (batch_size, seq_len), (
+            f"forward: attention_mask shape {attention_mask.shape} != expected ({batch_size}, {seq_len})"
+        )
+        assert labels.shape == (batch_size, seq_len), (
+            f"forward: labels shape {labels.shape} != expected ({batch_size}, {seq_len})"
+        )
+        assert input_features.ndim == 3 and input_features.shape[0] == batch_size, (
+            f"forward: input_features expected [batch, mel_dim, mel_len], got {input_features.shape}"
+        )
+        mel_len = input_features.shape[2]
+        assert feature_attention_mask.shape == (batch_size, mel_len), (
+            f"forward: feature_attention_mask shape {feature_attention_mask.shape} != expected ({batch_size}, {mel_len})"
+        )
+        assert len(segment_info) == batch_size, (
+            f"forward: segment_info length {len(segment_info)} != batch_size {batch_size}"
+        )
+        assert speaker_embeddings.shape == (batch_size, SPEAKER_EMBEDDING_DIM), (
+            f"forward: speaker_embeddings shape {speaker_embeddings.shape} != expected ({batch_size}, {SPEAKER_EMBEDDING_DIM})"
+        )
+
         # 1. Run Thinker on full sequence
         thinker_outputs = self.thinker(
             input_ids=input_ids,
@@ -634,9 +882,26 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         thinker_loss = thinker_outputs.loss
         if thinker_loss is None:
             thinker_loss = torch.tensor(0.0, device=self.device)
+        else:
+            _assert_finite_scalar(thinker_loss, "forward: thinker_loss")
+
+        # Validate thinker_outputs has expected attributes
+        assert hasattr(thinker_outputs, "hidden_states"), (
+            "forward: thinker_outputs missing hidden_states"
+        )
+        assert thinker_outputs.hidden_states is not None, (
+            "forward: thinker_outputs.hidden_states is None"
+        )
+        assert len(thinker_outputs.hidden_states) > 0, (
+            "forward: thinker_outputs.hidden_states is empty"
+        )
 
         # 2. Extract segment hidden states (from hidden_states[0] = input embeddings)
         input_embeddings = thinker_outputs.hidden_states[0]  # [batch, seq_len, hidden]
+        assert input_embeddings.shape[0] == batch_size, (
+            f"forward: input_embeddings batch {input_embeddings.shape[0]} != expected {batch_size}"
+        )
+
         segment_hidden_list, segment_lengths, seg_to_batch = (
             self._extract_segment_hidden_states(input_embeddings, segment_info)
         )
@@ -656,6 +921,9 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         # 4. Encode target audios
         segment_codes_list, code_lengths = self._encode_segment_audios(segment_info)
+        assert len(segment_codes_list) == len(segment_hidden_list), (
+            f"forward: segment_codes_list length {len(segment_codes_list)} != segment_hidden_list length {len(segment_hidden_list)}"
+        )
 
         # 5. Expand speaker embeddings to segments
         segment_speakers = self._expand_speaker_to_segments(
@@ -687,6 +955,9 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         # 7. Combine losses
         mtp_weight = getattr(self.config, "mtp_weight", 2.0)
         total_loss = thinker_loss + avg_talker_loss + (mtp_weight * avg_mtp_loss)
+
+        # Validate final loss is finite
+        _assert_finite_scalar(total_loss, "forward: total_loss")
 
         # Store for logging
         self._last_thinker_loss = thinker_loss.detach()

@@ -1768,6 +1768,23 @@ wheels = [
 ]
 
 [[package]]
+name = "liger-kernel"
+version = "0.6.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "torch", version = "2.9.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'extra-9-sca-train-cpu' and extra != 'extra-9-sca-train-cu126' and extra != 'extra-9-sca-train-cu128' and extra != 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu126') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cu128' and extra == 'extra-9-sca-train-cu130')" },
+    { name = "torch", version = "2.9.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'linux' and extra == 'extra-9-sca-train-cpu') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu126') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cu128' and extra == 'extra-9-sca-train-cu130')" },
+    { name = "torch", version = "2.9.1+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "(sys_platform == 'linux' and extra == 'extra-9-sca-train-cu126') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu126') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cu128' and extra == 'extra-9-sca-train-cu130')" },
+    { name = "torch", version = "2.9.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cu128' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu126') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu130')" },
+    { name = "torch", version = "2.9.1+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "(sys_platform == 'linux' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cu128' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu126') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu130')" },
+    { name = "triton", marker = "sys_platform == 'linux' or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu126') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cu128' and extra == 'extra-9-sca-train-cu130')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d8/21/517c24064fd4229040c00819d6d75375586338a603ca194c91897f414ff9/liger_kernel-0.6.4.tar.gz", hash = "sha256:302c9bb661a4ffb7bb716c5bff852f2449a3e8273be5ba9f4cc46ad06308af52", size = 3730057 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/1a/12ef4b0310918ce3436c6dfdba60ccbbddd28c97a8260207a45a9976eaf7/liger_kernel-0.6.4-py3-none-any.whl", hash = "sha256:77b041f97cca2afaaef3b71f2e4d2978bf12b75c75f1de64ca557acfc4e3dc55", size = 230601 },
+]
+
+[[package]]
 name = "llvmlite"
 version = "0.45.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3948,6 +3965,7 @@ dependencies = [
     { name = "datasets" },
     { name = "hf-transfer" },
     { name = "librosa" },
+    { name = "liger-kernel", marker = "sys_platform == 'linux' or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu126') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cpu' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu128') or (extra == 'extra-9-sca-train-cu126' and extra == 'extra-9-sca-train-cu130') or (extra == 'extra-9-sca-train-cu128' and extra == 'extra-9-sca-train-cu130')" },
     { name = "numpy" },
     { name = "peft" },
     { name = "qwen-omni-utils" },
@@ -4058,6 +4076,7 @@ requires-dist = [
     { name = "flash-attn", marker = "extra == 'cu130'", url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.5.4/flash_attn-2.8.3+cu130torch2.9-cp312-cp312-linux_x86_64.whl" },
     { name = "hf-transfer", specifier = ">=0.1.9" },
     { name = "librosa", specifier = "==0.10.2" },
+    { name = "liger-kernel", marker = "sys_platform == 'linux'", specifier = ">=0.6.4" },
     { name = "numpy", specifier = ">=2.3.5" },
     { name = "peft", specifier = ">=0.18.0" },
     { name = "qwen-omni-utils", specifier = ">=0.0.8" },

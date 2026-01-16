@@ -534,12 +534,14 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         )
 
         config = self.config
-        hidden_dim = segment_hidden.shape[2]
 
         # Project segment hidden through text_projection
         projected_hidden = self.talker.text_projection(segment_hidden).to(
             self.talker.device
         )
+
+        # Use Talker's hidden dim (after projection) for all prefix tensors
+        hidden_dim = projected_hidden.shape[2]
 
         # Get thinker embeddings (handling LoRA wrapper)
         thinker_embeddings = self.thinker.get_input_embeddings()

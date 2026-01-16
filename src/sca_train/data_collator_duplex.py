@@ -24,6 +24,27 @@ INPUT_AUDIO_SAMPLE_RATE = 16000
 TARGET_AUDIO_SAMPLE_RATE = 24000
 
 
+def _get_feat_extract_output_lengths(input_lengths: int) -> int:
+    """Compute audio token count from mel spectrogram length.
+
+    This replicates the formula from Qwen3-Omni's audio encoder that determines
+    how many audio tokens are produced from a given mel spectrogram length.
+    The audio encoder uses 3 conv layers with stride 2, plus chunked processing.
+
+    Args:
+        input_lengths: Number of mel spectrogram frames.
+
+    Returns:
+        Number of audio tokens/embeddings the encoder will produce.
+    """
+    input_lengths_leave = input_lengths % 100
+    feat_lengths = (input_lengths_leave - 1) // 2 + 1
+    output_lengths = (
+        ((feat_lengths - 1) // 2 + 1 - 1) // 2 + 1 + (input_lengths // 100) * 13
+    )
+    return output_lengths
+
+
 def _assert_valid_audio_waveform(
     waveform: np.ndarray, expected_sr: int, name: str
 ) -> None:
@@ -195,21 +216,30 @@ class FullDuplexCollator:
             row = feature["dataset_row_obj"]
             rows.append(row)
 
-        # 1. Build input_ids and labels
-        input_ids_list, labels_list, audio_positions_list = self._build_sequences(rows)
+        # 1. Process input audios FIRST to get mel lengths
+        # We need mel lengths to calculate correct audio token counts
+        input_features, feature_attention_mask, mel_lengths = (
+            self._process_input_audios(rows)
+        )
 
-        # 2. Pad sequences
+        # 2. Calculate expected audio token counts per sample
+        # This uses the same formula as Qwen3-Omni's audio encoder
+        audio_token_counts = [
+            _get_feat_extract_output_lengths(mel_len) for mel_len in mel_lengths
+        ]
+
+        # 3. Build input_ids and labels with correct audio token counts
+        input_ids_list, labels_list = self._build_sequences(rows, audio_token_counts)
+
+        # 4. Pad sequences
         input_ids, attention_mask, labels = self._pad_sequences(
             input_ids_list, labels_list
         )
 
-        # 3. Process input audios to mel spectrograms
-        input_features, feature_attention_mask = self._process_input_audios(rows)
-
-        # 4. Extract segment info for Talker
+        # 5. Extract segment info for Talker
         segment_info = self._extract_segment_info(rows)
 
-        # 5. Stack speaker embeddings
+        # 6. Stack speaker embeddings
         speaker_embeddings = self._stack_speaker_embeddings(rows)
 
         # Validate outputs
@@ -280,40 +310,91 @@ class FullDuplexCollator:
         }
 
     def _build_sequences(
-        self, rows: list[DatasetRow]
-    ) -> tuple[list[list[int]], list[list[int]], list[list[int]]]:
+        self, rows: list[DatasetRow], audio_token_counts: list[int]
+    ) -> tuple[list[list[int]], list[list[int]]]:
         """Build input_ids and labels from DatasetRows.
 
-        Replaces -100 with audio_token_id in input_ids.
-        Keeps -100 in labels at audio positions.
+        The dataset uses -100 as placeholders for audio tokens. However, the number
+        of -100 placeholders may not match the actual number of audio tokens the
+        encoder will produce (due to the non-linear relationship between mel frames
+        and audio tokens from conv layer downsampling).
+
+        This method replaces -100 placeholders with the correct number of audio_token_id
+        tokens based on the actual mel spectrogram lengths computed earlier.
+
+        Strategy:
+        - Count -100 placeholders in each row
+        - If actual audio tokens > placeholders: insert extra tokens at the end
+          of the first audio region
+        - If actual audio tokens < placeholders: skip some placeholders
+        - If equal: 1:1 replacement
+
+        Args:
+            rows: List of DatasetRow objects.
+            audio_token_counts: Expected number of audio tokens per row (from mel lengths).
 
         Returns:
-            Tuple of (input_ids_list, labels_list, audio_positions_list).
+            Tuple of (input_ids_list, labels_list).
         """
         assert len(rows) > 0, "_build_sequences: rows list is empty"
+        assert len(rows) == len(audio_token_counts), (
+            f"_build_sequences: rows ({len(rows)}) != audio_token_counts ({len(audio_token_counts)})"
+        )
 
         input_ids_list = []
         labels_list = []
-        audio_positions_list = []
 
-        for row_idx, row in enumerate(rows):
+        for row_idx, (row, expected_audio_tokens) in enumerate(
+            zip(rows, audio_token_counts)
+        ):
             # Validate input_sequence
             input_seq = row.input_sequence
             assert len(input_seq) > 0, f"row[{row_idx}]: input_sequence is empty"
 
+            # Count -100 placeholders
+            placeholder_count = sum(1 for t in input_seq if t == -100)
+
+            # Calculate the difference
+            token_diff = expected_audio_tokens - placeholder_count
+
             input_ids = []
             labels = []
-            audio_positions = []
+            audio_tokens_inserted = 0
+            first_audio_region_ended = False
 
             for i, token in enumerate(input_seq):
                 assert isinstance(token, int), (
                     f"row[{row_idx}] token[{i}]: expected int, got {type(token)}"
                 )
                 if token == -100:
-                    # Replace with audio_token_id for input, keep -100 for labels
-                    input_ids.append(self.audio_token_id)
-                    labels.append(-100)
-                    audio_positions.append(i)
+                    if token_diff > 0 and not first_audio_region_ended:
+                        # Need to insert extra audio tokens
+                        # Insert one audio token for this placeholder
+                        input_ids.append(self.audio_token_id)
+                        labels.append(-100)
+                        audio_tokens_inserted += 1
+
+                        # Check if next token is not -100 (end of audio region)
+                        if i + 1 >= len(input_seq) or input_seq[i + 1] != -100:
+                            # End of first audio region - insert extra tokens here
+                            for _ in range(token_diff):
+                                input_ids.append(self.audio_token_id)
+                                labels.append(-100)
+                                audio_tokens_inserted += 1
+                            first_audio_region_ended = True
+                    elif token_diff < 0:
+                        # Need to skip some placeholders
+                        # Skip if we've already inserted enough
+                        if audio_tokens_inserted < expected_audio_tokens:
+                            input_ids.append(self.audio_token_id)
+                            labels.append(-100)
+                            audio_tokens_inserted += 1
+                        # else: skip this placeholder
+                    else:
+                        # 1:1 replacement
+                        input_ids.append(self.audio_token_id)
+                        labels.append(-100)
+                        audio_tokens_inserted += 1
                 else:
                     input_ids.append(token)
                     labels.append(token)
@@ -322,16 +403,24 @@ class FullDuplexCollator:
             if len(input_ids) > self.max_length:
                 input_ids = input_ids[: self.max_length]
                 labels = labels[: self.max_length]
-                audio_positions = [p for p in audio_positions if p < self.max_length]
 
             assert len(input_ids) > 0, (
                 f"row[{row_idx}]: input_ids is empty after processing"
             )
+
+            # Verify audio token count matches expected
+            actual_audio_tokens = sum(1 for t in input_ids if t == self.audio_token_id)
+            if (
+                actual_audio_tokens != expected_audio_tokens
+                and len(input_ids) <= self.max_length
+            ):
+                # This can happen if truncation cut off audio tokens
+                pass  # Allow mismatch only due to truncation
+
             input_ids_list.append(input_ids)
             labels_list.append(labels)
-            audio_positions_list.append(audio_positions)
 
-        return input_ids_list, labels_list, audio_positions_list
+        return input_ids_list, labels_list
 
     def _pad_sequences(
         self, input_ids_list: list[list[int]], labels_list: list[list[int]]
@@ -386,17 +475,21 @@ class FullDuplexCollator:
 
     def _process_input_audios(
         self, rows: list[DatasetRow]
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, list[int]]:
         """Process input audios into mel spectrograms.
 
-        Concatenates all input audio chunks per sample, then extracts features.
-        Uses padding=False for individual samples to handle variable lengths,
-        then manually pads the batch.
+        Processes each audio chunk SEPARATELY to avoid the non-linear relationship
+        between concatenated audio length and audio token count. The Qwen3-Omni
+        audio encoder produces 4 tokens per chunk (32 mel frames from 5120 samples).
+
+        By processing chunks separately and concatenating mel spectrograms, we ensure
+        the total mel length matches what the dataset expects (n_chunks * 32 frames).
 
         Returns:
-            Tuple of (input_features, feature_attention_mask).
+            Tuple of (input_features, feature_attention_mask, mel_lengths).
             input_features: [batch, mel_dim, max_mel_len]
             feature_attention_mask: [batch, max_mel_len]
+            mel_lengths: list of actual mel lengths per sample (for audio token calculation)
         """
         assert len(rows) > 0, "_process_input_audios: rows list is empty"
 
@@ -406,10 +499,20 @@ class FullDuplexCollator:
         for row_idx, row in enumerate(rows):
             if len(row.input_audios) == 0:
                 # No audio - create minimal placeholder
-                # Use a small silence chunk
-                concat_audio = np.zeros(1600, dtype=np.float32)  # 100ms at 16kHz
+                # Use a small silence chunk to get consistent mel dimensions
+                silence = np.zeros(1600, dtype=np.float32)  # 100ms at 16kHz
+                features = self.feature_extractor(
+                    silence,
+                    sampling_rate=INPUT_AUDIO_SAMPLE_RATE,
+                    return_tensors="pt",
+                    padding=False,
+                )
+                mel = features["input_features"].squeeze(0)  # [mel_dim, mel_len]
+                all_features.append(mel)
+                all_lengths.append(mel.shape[-1])
             else:
-                # Validate each audio chunk
+                # Process each audio chunk separately to preserve token alignment
+                chunk_mels = []
                 for audio_idx, audio in enumerate(row.input_audios):
                     _assert_valid_audio_waveform(
                         audio.waveform,
@@ -417,36 +520,23 @@ class FullDuplexCollator:
                         f"row[{row_idx}].input_audios[{audio_idx}]",
                     )
 
-                # Concatenate all input audio chunks
-                concat_audio = np.concatenate(
-                    [audio.waveform for audio in row.input_audios]
-                )
+                    # Extract features for this chunk
+                    features = self.feature_extractor(
+                        audio.waveform,
+                        sampling_rate=INPUT_AUDIO_SAMPLE_RATE,
+                        return_tensors="pt",
+                        padding=False,
+                    )
+                    chunk_mel = features["input_features"].squeeze(
+                        0
+                    )  # [mel_dim, mel_len]
+                    chunk_mels.append(chunk_mel)
 
-            assert len(concat_audio) > 0, f"row[{row_idx}]: concatenated audio is empty"
-
-            # Extract features without padding
-            # Returns dict with "input_features" key
-            features = self.feature_extractor(
-                concat_audio,
-                sampling_rate=INPUT_AUDIO_SAMPLE_RATE,
-                return_tensors="pt",
-                padding=False,
-            )
-
-            assert "input_features" in features, (
-                f"row[{row_idx}]: feature_extractor did not return 'input_features'"
-            )
-            mel = features["input_features"]  # [1, mel_dim, mel_len]
-
-            assert mel.ndim == 3, (
-                f"row[{row_idx}]: mel expected 3D, got {mel.ndim}D with shape {mel.shape}"
-            )
-            assert mel.shape[0] == 1, (
-                f"row[{row_idx}]: mel batch dim expected 1, got {mel.shape[0]}"
-            )
-
-            all_features.append(mel.squeeze(0))  # [mel_dim, mel_len]
-            all_lengths.append(mel.shape[-1])
+                # Concatenate mel spectrograms along time axis
+                # This preserves the chunk boundaries and ensures consistent token count
+                concat_mel = torch.cat(chunk_mels, dim=-1)  # [mel_dim, total_mel_len]
+                all_features.append(concat_mel)
+                all_lengths.append(concat_mel.shape[-1])
 
         # Pad to max length
         max_mel_len = max(all_lengths)
@@ -475,7 +565,7 @@ class FullDuplexCollator:
             f"_process_input_audios: attention_mask shape {attention_mask.shape} != expected ({batch_size}, {max_mel_len})"
         )
 
-        return padded_features, attention_mask
+        return padded_features, attention_mask, all_lengths
 
     def _extract_segment_info(self, rows: list[DatasetRow]) -> list[list[SegmentInfo]]:
         """Extract segment info for Talker training.

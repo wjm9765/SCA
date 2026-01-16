@@ -36,6 +36,16 @@ try:
 except ImportError:
     LIGER_AVAILABLE = False
 
+# FSDP utilities for accessing sharded parameters
+# When FSDP is active, lm_head.weight is sharded and we need summon_full_params
+try:
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    FSDP_AVAILABLE = True
+except ImportError:
+    FSDP_AVAILABLE = False
+    FSDP = None  # type: ignore
+
 # Constants for validation
 SPEAKER_EMBEDDING_DIM = 192
 TARGET_AUDIO_SAMPLE_RATE = 24000
@@ -953,11 +963,32 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             shift_labels = shift_labels.view(-1)
 
             # LigerFusedLinearCrossEntropyLoss.forward(lin_weight, _input, target, bias=None)
-            thinker_loss = self.thinker_loss_fn(
-                self.thinker.lm_head.weight,  # [vocab_size, hidden]
-                shift_hidden,  # [batch * (seq_len-1), hidden]
-                shift_labels,  # [batch * (seq_len-1)]
-            )
+            # With FSDP, lm_head.weight is sharded after forward pass completes.
+            # We need to use summon_full_params to temporarily unshard the weight.
+            lm_head = self.thinker.lm_head
+            if FSDP_AVAILABLE and isinstance(lm_head, FSDP):
+                # lm_head is directly wrapped in FSDP - unshard it
+                with FSDP.summon_full_params(lm_head, writeback=False):
+                    thinker_loss = self.thinker_loss_fn(
+                        lm_head.weight,  # [vocab_size, hidden]
+                        shift_hidden,  # [batch * (seq_len-1), hidden]
+                        shift_labels,  # [batch * (seq_len-1)]
+                    )
+            elif FSDP_AVAILABLE and isinstance(self.thinker, FSDP):
+                # lm_head is part of an FSDP-wrapped thinker - unshard the whole thinker
+                with FSDP.summon_full_params(self.thinker, writeback=False):
+                    thinker_loss = self.thinker_loss_fn(
+                        lm_head.weight,  # [vocab_size, hidden]
+                        shift_hidden,  # [batch * (seq_len-1), hidden]
+                        shift_labels,  # [batch * (seq_len-1)]
+                    )
+            else:
+                # Not FSDP wrapped - direct access
+                thinker_loss = self.thinker_loss_fn(
+                    lm_head.weight,  # [vocab_size, hidden]
+                    shift_hidden,  # [batch * (seq_len-1), hidden]
+                    shift_labels,  # [batch * (seq_len-1)]
+                )
         else:
             # Fallback: standard loss computation (will materialize logits)
             # This path is only used on non-Linux systems where Liger is unavailable

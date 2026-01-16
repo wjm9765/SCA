@@ -216,6 +216,18 @@ class FullDuplexCollator:
             row = feature["dataset_row_obj"]
             rows.append(row)
 
+        # DEBUG: Print sequence lengths BEFORE audio processing
+        for i, row in enumerate(rows):
+            original_seq_len = len(row.input_sequence)
+            placeholder_count = sum(1 for t in row.input_sequence if t == -100)
+            text_token_count = original_seq_len - placeholder_count
+            num_audio_chunks = len(row.input_audios)
+            print(
+                f"[DEBUG BEFORE] Sample {i}: original_seq_len={original_seq_len}, "
+                f"placeholders(-100)={placeholder_count}, text_tokens={text_token_count}, "
+                f"num_audio_chunks={num_audio_chunks}"
+            )
+
         # 1. Process input audios FIRST to get mel lengths
         # We need mel lengths to calculate correct audio token counts
         input_features, feature_attention_mask, mel_lengths = (
@@ -228,8 +240,27 @@ class FullDuplexCollator:
             _get_feat_extract_output_lengths(mel_len) for mel_len in mel_lengths
         ]
 
+        # DEBUG: Print mel lengths and audio token counts
+        for i, (mel_len, audio_tokens) in enumerate(
+            zip(mel_lengths, audio_token_counts)
+        ):
+            print(
+                f"[DEBUG AUDIO] Sample {i}: mel_length={mel_len}, "
+                f"audio_tokens_from_mel={audio_tokens}"
+            )
+
         # 3. Build input_ids and labels with correct audio token counts
         input_ids_list, labels_list = self._build_sequences(rows, audio_token_counts)
+
+        # DEBUG: Print final sequence lengths AFTER audio processing
+        for i, input_ids in enumerate(input_ids_list):
+            final_seq_len = len(input_ids)
+            audio_token_count = sum(1 for t in input_ids if t == self.audio_token_id)
+            text_token_count = final_seq_len - audio_token_count
+            print(
+                f"[DEBUG AFTER] Sample {i}: final_seq_len={final_seq_len}, "
+                f"audio_tokens={audio_token_count}, text_tokens={text_token_count}"
+            )
 
         # 4. Pad sequences
         input_ids, attention_mask, labels = self._pad_sequences(

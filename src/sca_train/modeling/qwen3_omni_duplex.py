@@ -869,6 +869,9 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             f"forward: speaker_embeddings shape {speaker_embeddings.shape} != expected ({batch_size}, {SPEAKER_EMBEDDING_DIM})"
         )
 
+        # Remove output_hidden_states from kwargs if present (we always set it to True)
+        kwargs.pop("output_hidden_states", None)
+
         # 1. Run Thinker on full sequence
         thinker_outputs = self.thinker(
             input_ids=input_ids,

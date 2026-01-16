@@ -931,7 +931,10 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         logits = thinker_outputs.logits  # [batch, seq_len, vocab_size]
 
         # Shift logits and labels for next-token prediction
-        shift_logits = logits[..., :-1, :].contiguous()
+        # NOTE: We use .clone() because Liger modifies the input tensor in-place
+        # to store gradients (memory optimization). Without clone, this corrupts
+        # the original logits tensor and causes NaN on subsequent forward passes.
+        shift_logits = logits[..., :-1, :].contiguous().clone()
         shift_labels = labels[..., 1:].contiguous()
 
         # Flatten for the loss function: [batch * (seq_len-1), vocab_size]

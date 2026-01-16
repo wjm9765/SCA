@@ -869,8 +869,20 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             f"forward: speaker_embeddings shape {speaker_embeddings.shape} != expected ({batch_size}, {SPEAKER_EMBEDDING_DIM})"
         )
 
-        # Remove output_hidden_states from kwargs if present (we always set it to True)
-        kwargs.pop("output_hidden_states", None)
+        # Filter kwargs to only pass safe parameters to thinker
+        # Remove parameters that could conflict with our explicit settings or cause issues
+        safe_kwargs = {}
+        unsafe_keys = {
+            "output_hidden_states",  # We always set this to True
+            "use_cache",  # Not needed for training, can cause issues
+            "past_key_values",  # Not needed for training
+            "cache_position",  # Computed internally by thinker
+            "return_dict",  # We expect dict outputs
+            "num_items_in_batch",  # Trainer artifact
+        }
+        for key, value in kwargs.items():
+            if key not in unsafe_keys:
+                safe_kwargs[key] = value
 
         # 1. Run Thinker on full sequence
         thinker_outputs = self.thinker(
@@ -880,7 +892,8 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             input_features=input_features,
             feature_attention_mask=feature_attention_mask,
             output_hidden_states=True,
-            **kwargs,
+            use_cache=False,
+            **safe_kwargs,
         )
         thinker_loss = thinker_outputs.loss
         if thinker_loss is None:

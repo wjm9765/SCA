@@ -31,7 +31,7 @@ from sca_train.data_collator_duplex import SegmentInfo
 # Uses Triton kernels to avoid float32 upcast that causes OOM with large vocab
 # Only available on Linux; falls back to standard loss on other platforms
 try:
-    from liger_kernel.transformers import LigerCrossEntropyLoss  # type: ignore[unused-ignore-comment]
+    from liger_kernel.transformers import LigerCrossEntropyLoss  # type: ignore[import-not-found, import-untyped]
 
     LIGER_AVAILABLE = True
 except ImportError:

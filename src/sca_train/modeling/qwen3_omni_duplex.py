@@ -27,10 +27,11 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from sca_train.data_collator_duplex import SegmentInfo
 
-# Liger Kernel for memory-efficient fused linear cross-entropy
+# Liger Kernel for memory-efficient cross-entropy loss
+# Uses Triton kernels to avoid float32 upcast that causes OOM with large vocab
 # Only available on Linux; falls back to standard loss on other platforms
 try:
-    from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss  # type: ignore
+    from liger_kernel.transformers import LigerCrossEntropyLoss  # type: ignore
 
     LIGER_AVAILABLE = True
 except ImportError:
@@ -169,14 +170,14 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         talker_hidden_size = self.config.talker_config.text_config.hidden_size
         self.speaker_projection = nn.Linear(speaker_embed_dim, talker_hidden_size)
 
-        # Liger fused linear cross-entropy for memory-efficient Thinker loss
-        # This avoids materializing the full [seq_len, vocab_size] logits tensor
+        # Liger cross-entropy for memory-efficient Thinker loss
+        # Uses Triton kernels to avoid float32 upcast that causes OOM with large vocab
         if LIGER_AVAILABLE:
-            self.thinker_loss_fn = LigerFusedLinearCrossEntropyLoss(
+            self.thinker_loss_fn = LigerCrossEntropyLoss(
                 ignore_index=-100,
                 reduction="mean",
             )
-            print("[Liger] Using fused linear cross-entropy for Thinker loss")
+            print("[Liger] Using LigerCrossEntropyLoss for Thinker loss")
         else:
             self.thinker_loss_fn = None
             print(
@@ -909,14 +910,14 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         # 1. Run Thinker on full sequence
         # NOTE: We pass labels=None to skip the internal loss computation.
-        # This is because the internal loss materializes the full [seq_len, vocab_size]
-        # logits tensor which causes OOM with long sequences. Instead, we compute
-        # the loss using Liger's fused linear cross-entropy which never materializes
-        # the full logits tensor.
+        # The internal loss uses F.cross_entropy which upcasts logits to float32,
+        # causing OOM with long sequences (~15GB for 25k tokens × 152k vocab).
+        # Instead, we compute the loss using Liger's cross-entropy which stays
+        # in bf16 and uses Triton kernels for memory efficiency (~7.6GB).
         thinker_outputs = self.thinker(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            labels=None,  # Skip internal loss - we compute it ourselves
+            labels=None,  # Skip internal loss - we compute it ourselves with Liger
             input_features=input_features,
             feature_attention_mask=feature_attention_mask,
             output_hidden_states=True,
@@ -934,39 +935,35 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         assert len(thinker_outputs.hidden_states) > 0, (
             "forward: thinker_outputs.hidden_states is empty"
         )
+        assert hasattr(thinker_outputs, "logits"), (
+            "forward: thinker_outputs missing logits"
+        )
+        assert thinker_outputs.logits is not None, (
+            "forward: thinker_outputs.logits is None"
+        )
 
-        # Compute Thinker loss using Liger's fused linear cross-entropy
-        # This avoids materializing the full [seq_len, vocab_size] logits tensor
-        # hidden_states[-1] is the last layer output (before lm_head)
-        last_hidden_state = thinker_outputs.hidden_states[
-            -1
-        ]  # [batch, seq_len, hidden]
+        # Compute Thinker loss using Liger's cross-entropy
+        # Liger uses Triton kernels and stays in bf16, avoiding the float32 upcast
+        # that causes OOM in standard F.cross_entropy
+        logits = thinker_outputs.logits  # [batch, seq_len, vocab_size]
+
+        # Shift logits and labels for next-token prediction
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+
+        # Flatten for the loss function: [batch * (seq_len-1), vocab_size]
+        shift_logits = shift_logits.view(-1, shift_logits.size(-1))
+        shift_labels = shift_labels.view(-1)
 
         if self.thinker_loss_fn is not None:
-            # Use Liger fused linear cross-entropy (memory efficient)
-            # Shift hidden states and labels for next-token prediction
-            shift_hidden = last_hidden_state[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-
-            # Flatten for the loss function: [batch * (seq_len-1), hidden]
-            shift_hidden = shift_hidden.view(-1, shift_hidden.size(-1))
-            shift_labels = shift_labels.view(-1)
-
-            # LigerFusedLinearCrossEntropyLoss.forward(lin_weight, _input, target, bias=None)
-            thinker_loss = self.thinker_loss_fn(
-                self.thinker.lm_head.weight,  # [vocab_size, hidden]
-                shift_hidden,  # [batch * (seq_len-1), hidden]
-                shift_labels,  # [batch * (seq_len-1)]
-            )
+            # Use Liger cross-entropy (memory efficient, stays in bf16)
+            thinker_loss = self.thinker_loss_fn(shift_logits, shift_labels)
         else:
-            # Fallback: standard loss computation (will materialize logits)
+            # Fallback: standard loss computation (will upcast to float32)
             # This path is only used on non-Linux systems where Liger is unavailable
-            logits = self.thinker.lm_head(last_hidden_state)
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
             thinker_loss = F.cross_entropy(
-                shift_logits.view(-1, shift_logits.size(-1)),
-                shift_labels.view(-1),
+                shift_logits,
+                shift_labels,
                 ignore_index=-100,
             )
 

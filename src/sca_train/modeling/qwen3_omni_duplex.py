@@ -27,6 +27,15 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from sca_train.data_collator_duplex import SegmentInfo
 
+# Liger Kernel for memory-efficient fused linear cross-entropy
+# Only available on Linux; falls back to standard loss on other platforms
+try:
+    from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss  # type: ignore
+
+    LIGER_AVAILABLE = True
+except ImportError:
+    LIGER_AVAILABLE = False
+
 # Constants for validation
 SPEAKER_EMBEDDING_DIM = 192
 TARGET_AUDIO_SAMPLE_RATE = 24000
@@ -159,6 +168,20 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         speaker_embed_dim = 192
         talker_hidden_size = self.config.talker_config.text_config.hidden_size
         self.speaker_projection = nn.Linear(speaker_embed_dim, talker_hidden_size)
+
+        # Liger fused linear cross-entropy for memory-efficient Thinker loss
+        # This avoids materializing the full [seq_len, vocab_size] logits tensor
+        if LIGER_AVAILABLE:
+            self.thinker_loss_fn = LigerFusedLinearCrossEntropyLoss(
+                ignore_index=-100,
+                reduction="mean",
+            )
+            print("[Liger] Using fused linear cross-entropy for Thinker loss")
+        else:
+            self.thinker_loss_fn = None
+            print(
+                "[Liger] Not available, using standard cross-entropy for Thinker loss"
+            )
 
     def load_mimi_model(self) -> None:
         """Load Mimi model and feature extractor.
@@ -885,21 +908,21 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 safe_kwargs[key] = value
 
         # 1. Run Thinker on full sequence
+        # NOTE: We pass labels=None to skip the internal loss computation.
+        # This is because the internal loss materializes the full [seq_len, vocab_size]
+        # logits tensor which causes OOM with long sequences. Instead, we compute
+        # the loss using Liger's fused linear cross-entropy which never materializes
+        # the full logits tensor.
         thinker_outputs = self.thinker(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            labels=labels,
+            labels=None,  # Skip internal loss - we compute it ourselves
             input_features=input_features,
             feature_attention_mask=feature_attention_mask,
             output_hidden_states=True,
             use_cache=False,
             **safe_kwargs,
         )
-        thinker_loss = thinker_outputs.loss
-        if thinker_loss is None:
-            thinker_loss = torch.tensor(0.0, device=self.device)
-        else:
-            _assert_finite_scalar(thinker_loss, "forward: thinker_loss")
 
         # Validate thinker_outputs has expected attributes
         assert hasattr(thinker_outputs, "hidden_states"), (
@@ -911,6 +934,43 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         assert len(thinker_outputs.hidden_states) > 0, (
             "forward: thinker_outputs.hidden_states is empty"
         )
+
+        # Compute Thinker loss using Liger's fused linear cross-entropy
+        # This avoids materializing the full [seq_len, vocab_size] logits tensor
+        # hidden_states[-1] is the last layer output (before lm_head)
+        last_hidden_state = thinker_outputs.hidden_states[
+            -1
+        ]  # [batch, seq_len, hidden]
+
+        if self.thinker_loss_fn is not None:
+            # Use Liger fused linear cross-entropy (memory efficient)
+            # Shift hidden states and labels for next-token prediction
+            shift_hidden = last_hidden_state[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+
+            # Flatten for the loss function: [batch * (seq_len-1), hidden]
+            shift_hidden = shift_hidden.view(-1, shift_hidden.size(-1))
+            shift_labels = shift_labels.view(-1)
+
+            # LigerFusedLinearCrossEntropyLoss.forward(lin_weight, _input, target, bias=None)
+            thinker_loss = self.thinker_loss_fn(
+                self.thinker.lm_head.weight,  # [vocab_size, hidden]
+                shift_hidden,  # [batch * (seq_len-1), hidden]
+                shift_labels,  # [batch * (seq_len-1)]
+            )
+        else:
+            # Fallback: standard loss computation (will materialize logits)
+            # This path is only used on non-Linux systems where Liger is unavailable
+            logits = self.thinker.lm_head(last_hidden_state)
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            thinker_loss = F.cross_entropy(
+                shift_logits.view(-1, shift_logits.size(-1)),
+                shift_labels.view(-1),
+                ignore_index=-100,
+            )
+
+        _assert_finite_scalar(thinker_loss, "forward: thinker_loss")
 
         # 2. Extract segment hidden states (from hidden_states[0] = input embeddings)
         input_embeddings = thinker_outputs.hidden_states[0]  # [batch, seq_len, hidden]

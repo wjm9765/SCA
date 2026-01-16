@@ -18,6 +18,7 @@ dependencies = [
     "datasets>=4.4.1",
     "hf-transfer>=0.1.9",
     "librosa==0.10.2",
+    "liger-kernel>=0.6.4 ; sys_platform == 'linux'",
     "numpy>=2.3.5",
     "peft>=0.18.0",
     "qwen-omni-utils>=0.0.8",

@@ -974,25 +974,6 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 f"[DIAG][Rank {local_rank}][Step {step_num}] Num segments: {len(segment_info)}"
             )
 
-            # Check model weights for corruption
-            sample_param = next(self.thinker.parameters())
-            has_nan_weights = torch.isnan(sample_param).any().item()
-            has_inf_weights = torch.isinf(sample_param).any().item()
-            weights_max = sample_param.abs().max().item()
-
-            print(f"[DIAG][Rank {local_rank}][Step {step_num}] Model weights check:")
-            print(
-                f"[DIAG][Rank {local_rank}][Step {step_num}]   Has NaN: {has_nan_weights}, Has Inf: {has_inf_weights}"
-            )
-            print(
-                f"[DIAG][Rank {local_rank}][Step {step_num}]   Max abs value: {weights_max:.4f}"
-            )
-
-            if has_nan_weights or has_inf_weights:
-                print(
-                    f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: Model weights are corrupted! ***"
-                )
-
         # 1. Run Thinker on full sequence
         # NOTE: We pass labels=None to skip the internal loss computation.
         # The internal loss uses F.cross_entropy which upcasts logits to float32,
@@ -1042,62 +1023,6 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         # Flatten for the loss function: [batch * (seq_len-1), vocab_size]
         shift_logits = shift_logits.view(-1, shift_logits.size(-1))
         shift_labels = shift_labels.view(-1)
-
-        # === DEBUG LOGGING: Check logits BEFORE loss computation ===
-        if step_num <= 3:
-            has_nan_logits = torch.isnan(shift_logits).any().item()
-            has_inf_logits = torch.isinf(shift_logits).any().item()
-            logits_min = shift_logits.min().item()
-            logits_max = shift_logits.max().item()
-            logits_mean = shift_logits.mean().item()
-
-            print(
-                f"[DIAG][Rank {local_rank}][Step {step_num}] Thinker logits BEFORE loss:"
-            )
-            print(
-                f"[DIAG][Rank {local_rank}][Step {step_num}]   Shape: {shift_logits.shape}"
-            )
-            print(
-                f"[DIAG][Rank {local_rank}][Step {step_num}]   Has NaN: {has_nan_logits}, Has Inf: {has_inf_logits}"
-            )
-            print(
-                f"[DIAG][Rank {local_rank}][Step {step_num}]   Range: [{logits_min:.4f}, {logits_max:.4f}], Mean: {logits_mean:.4f}"
-            )
-
-            # Check labels
-            n_non_ignore = (shift_labels != -100).sum().item()
-            n_total = shift_labels.numel()
-            labels_min = (
-                shift_labels[shift_labels != -100].min().item()
-                if n_non_ignore > 0
-                else -1
-            )
-            labels_max = (
-                shift_labels[shift_labels != -100].max().item()
-                if n_non_ignore > 0
-                else -1
-            )
-
-            print(f"[DIAG][Rank {local_rank}][Step {step_num}] Thinker labels:")
-            print(
-                f"[DIAG][Rank {local_rank}][Step {step_num}]   Non-ignore count: {n_non_ignore}/{n_total}"
-            )
-            print(
-                f"[DIAG][Rank {local_rank}][Step {step_num}]   Label range: [{labels_min}, {labels_max}]"
-            )
-            print(
-                f"[DIAG][Rank {local_rank}][Step {step_num}]   Vocab size: {shift_logits.shape[-1]}"
-            )
-
-            if n_non_ignore == 0:
-                print(
-                    f"[DIAG][Rank {local_rank}][Step {step_num}]   *** WARNING: All labels are -100 (ignore)! ***"
-                )
-
-            if has_nan_logits or has_inf_logits:
-                print(
-                    f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: Logits contain NaN/Inf BEFORE loss computation! ***"
-                )
 
         if self.thinker_loss_fn is not None:
             # Use Liger cross-entropy (memory efficient, stays in bf16)

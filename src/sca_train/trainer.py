@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional, Union
 
+import torch
 from transformers import Trainer
 
 from . import logger
@@ -86,6 +87,69 @@ class QwenTrainer(Trainer):
             )
 
         return (loss, outputs) if return_outputs else loss
+
+    def training_step(self, model, inputs, num_items_in_batch=None):
+        """Override training_step to add gradient norm monitoring for debugging."""
+        local_rank = get_local_rank()
+
+        # Call parent training_step which does forward + backward + gradient clipping
+        loss = super().training_step(model, inputs, num_items_in_batch)
+
+        # Monitor gradient norms AFTER clipping for first 5 steps to diagnose NaN issues
+        # Note: Gradient clipping happens inside parent's training_step before optimizer.step()
+        if self.state.global_step <= 5:
+            total_norm = 0.0
+            num_params = 0
+            max_grad = 0.0
+            min_grad = float("inf")
+
+            for p in model.parameters():
+                if p.grad is not None:
+                    param_norm = p.grad.data.norm(2)
+                    total_norm += param_norm.item() ** 2
+                    num_params += 1
+
+                    # Track min/max gradient values
+                    grad_max = p.grad.data.abs().max().item()
+                    grad_min = p.grad.data.abs().min().item()
+                    max_grad = max(max_grad, grad_max)
+                    if grad_min < min_grad:
+                        min_grad = grad_min
+
+            total_norm = total_norm**0.5
+
+            # Check gradient clipping config
+            max_grad_norm = (
+                self.args.max_grad_norm
+                if self.args.max_grad_norm is not None
+                else "None"
+            )
+
+            print(
+                f"[GRAD][Rank {local_rank}][Step {self.state.global_step}] "
+                f"Gradient norm (after clipping): {total_norm:.4f}, "
+                f"Max grad: {max_grad:.6f}, "
+                f"Min grad: {min_grad:.6f}, "
+                f"Clip threshold: {max_grad_norm}"
+            )
+
+            # Check for NaN/Inf in gradients
+            has_nan = False
+            has_inf = False
+            for p in model.parameters():
+                if p.grad is not None:
+                    if torch.isnan(p.grad).any():
+                        has_nan = True
+                    if torch.isinf(p.grad).any():
+                        has_inf = True
+
+            if has_nan or has_inf:
+                print(
+                    f"[GRAD][Rank {local_rank}][Step {self.state.global_step}] "
+                    f"*** ERROR: Gradients contain NaN: {has_nan}, Inf: {has_inf} ***"
+                )
+
+        return loss
 
     def log(
         self, logs: Dict[str, float], start_time: Optional[float] = None, **kwargs

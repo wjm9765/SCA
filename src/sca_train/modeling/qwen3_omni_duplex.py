@@ -1024,6 +1024,67 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         shift_logits = shift_logits.view(-1, shift_logits.size(-1))
         shift_labels = shift_labels.view(-1)
 
+        # === PHASE 1 DIAGNOSTICS: Validate inputs to Liger ===
+        if step_num <= 3:
+            logits_has_nan = torch.isnan(shift_logits).any().item()
+            logits_has_inf = torch.isinf(shift_logits).any().item()
+            logits_min = shift_logits.min().item()
+            logits_max = shift_logits.max().item()
+            logits_mean = shift_logits.mean().item()
+
+            valid_labels = (shift_labels != -100).sum().item()
+            total_labels = shift_labels.numel()
+
+            print(f"[LIGER-IN][Rank {local_rank}][Step {step_num}] Input to Liger:")
+            print(
+                f"[LIGER-IN][Rank {local_rank}][Step {step_num}]   Logits shape: {shift_logits.shape}"
+            )
+            print(
+                f"[LIGER-IN][Rank {local_rank}][Step {step_num}]   Has NaN: {logits_has_nan}, Has Inf: {logits_has_inf}"
+            )
+            print(
+                f"[LIGER-IN][Rank {local_rank}][Step {step_num}]   Range: [{logits_min:.4f}, {logits_max:.4f}], Mean: {logits_mean:.4f}"
+            )
+            print(
+                f"[LIGER-IN][Rank {local_rank}][Step {step_num}]   Labels: valid={valid_labels}/{total_labels}"
+            )
+
+            if valid_labels == 0:
+                print(
+                    f"[LIGER-IN][Rank {local_rank}][Step {step_num}]   *** WARNING: ALL LABELS ARE -100! ***"
+                )
+
+        # === PHASE 3 DIAGNOSTICS: Monitor gradients from Liger ===
+        if step_num <= 3:
+
+            def logits_grad_hook(grad):
+                if grad is not None:
+                    has_nan = torch.isnan(grad).any().item()
+                    has_inf = torch.isinf(grad).any().item()
+                    print(
+                        f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}] Logits gradient hook:"
+                    )
+                    print(
+                        f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}]   Has NaN: {has_nan}, Has Inf: {has_inf}"
+                    )
+
+                    if has_nan:
+                        nan_count = torch.isnan(grad).sum().item()
+                        total_elems = grad.numel()
+                        print(
+                            f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}]   *** NaN count: {nan_count}/{total_elems} ***"
+                        )
+
+                        nan_positions = torch.nonzero(
+                            torch.isnan(grad), as_tuple=False
+                        )[:5]
+                        print(
+                            f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}]   First 5 NaN positions: {nan_positions.tolist()}"
+                        )
+                return grad
+
+            shift_logits.register_hook(logits_grad_hook)
+
         if self.thinker_loss_fn is not None:
             # Use Liger cross-entropy (memory efficient, stays in bf16)
             thinker_loss = self.thinker_loss_fn(shift_logits, shift_labels)
@@ -1035,6 +1096,25 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 shift_labels,
                 ignore_index=-100,
             )
+
+        # === PHASE 2 DIAGNOSTICS: Monitor loss backward ===
+        if step_num <= 3:
+
+            def loss_backward_hook(grad):
+                if grad is not None:
+                    has_nan = (
+                        torch.isnan(grad).any().item() if grad.numel() > 0 else False
+                    )
+                    print(
+                        f"[LIGER-BACK][Rank {local_rank}][Step {step_num}] Loss backward hook:"
+                    )
+                    print(
+                        f"[LIGER-BACK][Rank {local_rank}][Step {step_num}]   Grad has NaN: {has_nan}"
+                    )
+                return grad
+
+            if thinker_loss.requires_grad:
+                thinker_loss.register_hook(loss_backward_hook)
 
         # === DEBUG LOGGING: Check thinker_loss AFTER computation ===
         if step_num <= 3:

@@ -37,11 +37,6 @@ try:
 except ImportError:
     LIGER_AVAILABLE = False
 
-# TEMPORARY: Disable Liger to diagnose NaN gradient issue
-# The backward pass through Liger is producing NaN gradients on step 1
-# Testing with standard cross-entropy to see if gradients are valid
-LIGER_AVAILABLE = False
-
 # Constants for validation
 SPEAKER_EMBEDDING_DIM = 192
 TARGET_AUDIO_SAMPLE_RATE = 24000

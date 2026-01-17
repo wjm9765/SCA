@@ -173,6 +173,9 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 "[Liger] Not available, using standard cross-entropy for Thinker loss"
             )
 
+        # Debug: Track forward pass steps for diagnostics
+        self._debug_step_count = 0
+
     def load_mimi_model(self) -> None:
         """Load Mimi model and feature extractor.
 
@@ -768,6 +771,43 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         )
         talker_loss = talker_outputs.loss
 
+        # === DEBUG LOGGING: Check talker_loss ===
+        step_num = self._debug_step_count
+        if step_num <= 3:
+            local_rank = (
+                torch.distributed.get_rank()
+                if torch.distributed.is_initialized()
+                else 0
+            )
+
+            # Check segment inputs
+            has_nan_hidden = torch.isnan(segment_hidden).any().item()
+            has_inf_hidden = torch.isinf(segment_hidden).any().item()
+
+            print(f"[DIAG][Rank {local_rank}][Step {step_num}] Talker segment:")
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Hidden has NaN: {has_nan_hidden}, Has Inf: {has_inf_hidden}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Hidden shape: {segment_hidden.shape}"
+            )
+
+            # Check talker loss
+            is_nan = torch.isnan(talker_loss).item()
+            is_inf = torch.isinf(talker_loss).item()
+            loss_val = talker_loss.item() if not (is_nan or is_inf) else None
+
+            print(f"[DIAG][Rank {local_rank}][Step {step_num}] Talker loss:")
+            print(f"[DIAG][Rank {local_rank}][Step {step_num}]   Value: {loss_val}")
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Is NaN: {is_nan}, Is Inf: {is_inf}"
+            )
+
+            if is_nan or is_inf:
+                print(
+                    f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: Talker loss is NaN/Inf! ***"
+                )
+
         # MTP training
         if not config.train_mtp:
             mtp_loss = torch.tensor(0.0, device=self.device)
@@ -821,6 +861,30 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 mtp_total_loss = mtp_total_loss + mtp_layer_loss
 
             mtp_loss = mtp_total_loss / num_mtp_layers
+
+        # === DEBUG LOGGING: Check mtp_loss ===
+        step_num = self._debug_step_count
+        if step_num <= 3:
+            local_rank = (
+                torch.distributed.get_rank()
+                if torch.distributed.is_initialized()
+                else 0
+            )
+
+            is_nan = torch.isnan(mtp_loss).item()
+            is_inf = torch.isinf(mtp_loss).item()
+            loss_val = mtp_loss.item() if not (is_nan or is_inf) else None
+
+            print(f"[DIAG][Rank {local_rank}][Step {step_num}] MTP loss:")
+            print(f"[DIAG][Rank {local_rank}][Step {step_num}]   Value: {loss_val}")
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Is NaN: {is_nan}, Is Inf: {is_inf}"
+            )
+
+            if is_nan or is_inf:
+                print(
+                    f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: MTP loss is NaN/Inf! ***"
+                )
 
         return talker_loss, mtp_loss
 
@@ -891,6 +955,44 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             if key not in unsafe_keys:
                 safe_kwargs[key] = value
 
+        # === DEBUG LOGGING: Track forward pass steps ===
+        self._debug_step_count += 1
+        step_num = self._debug_step_count
+        local_rank = (
+            torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+        )
+
+        # Log forward pass entry (first 3 steps only)
+        if step_num <= 3:
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}] ========== Forward pass started =========="
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}] Batch size: {batch_size}, Seq len: {seq_len}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}] Num segments: {len(segment_info)}"
+            )
+
+            # Check model weights for corruption
+            sample_param = next(self.thinker.parameters())
+            has_nan_weights = torch.isnan(sample_param).any().item()
+            has_inf_weights = torch.isinf(sample_param).any().item()
+            weights_max = sample_param.abs().max().item()
+
+            print(f"[DIAG][Rank {local_rank}][Step {step_num}] Model weights check:")
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Has NaN: {has_nan_weights}, Has Inf: {has_inf_weights}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Max abs value: {weights_max:.4f}"
+            )
+
+            if has_nan_weights or has_inf_weights:
+                print(
+                    f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: Model weights are corrupted! ***"
+                )
+
         # 1. Run Thinker on full sequence
         # NOTE: We pass labels=None to skip the internal loss computation.
         # The internal loss uses F.cross_entropy which upcasts logits to float32,
@@ -941,6 +1043,62 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         shift_logits = shift_logits.view(-1, shift_logits.size(-1))
         shift_labels = shift_labels.view(-1)
 
+        # === DEBUG LOGGING: Check logits BEFORE loss computation ===
+        if step_num <= 3:
+            has_nan_logits = torch.isnan(shift_logits).any().item()
+            has_inf_logits = torch.isinf(shift_logits).any().item()
+            logits_min = shift_logits.min().item()
+            logits_max = shift_logits.max().item()
+            logits_mean = shift_logits.mean().item()
+
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}] Thinker logits BEFORE loss:"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Shape: {shift_logits.shape}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Has NaN: {has_nan_logits}, Has Inf: {has_inf_logits}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Range: [{logits_min:.4f}, {logits_max:.4f}], Mean: {logits_mean:.4f}"
+            )
+
+            # Check labels
+            n_non_ignore = (shift_labels != -100).sum().item()
+            n_total = shift_labels.numel()
+            labels_min = (
+                shift_labels[shift_labels != -100].min().item()
+                if n_non_ignore > 0
+                else -1
+            )
+            labels_max = (
+                shift_labels[shift_labels != -100].max().item()
+                if n_non_ignore > 0
+                else -1
+            )
+
+            print(f"[DIAG][Rank {local_rank}][Step {step_num}] Thinker labels:")
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Non-ignore count: {n_non_ignore}/{n_total}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Label range: [{labels_min}, {labels_max}]"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Vocab size: {shift_logits.shape[-1]}"
+            )
+
+            if n_non_ignore == 0:
+                print(
+                    f"[DIAG][Rank {local_rank}][Step {step_num}]   *** WARNING: All labels are -100 (ignore)! ***"
+                )
+
+            if has_nan_logits or has_inf_logits:
+                print(
+                    f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: Logits contain NaN/Inf BEFORE loss computation! ***"
+                )
+
         if self.thinker_loss_fn is not None:
             # Use Liger cross-entropy (memory efficient, stays in bf16)
             thinker_loss = self.thinker_loss_fn(shift_logits, shift_labels)
@@ -952,6 +1110,28 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 shift_labels,
                 ignore_index=-100,
             )
+
+        # === DEBUG LOGGING: Check thinker_loss AFTER computation ===
+        if step_num <= 3:
+            is_nan = torch.isnan(thinker_loss).item()
+            is_inf = torch.isinf(thinker_loss).item()
+            loss_val = thinker_loss.item() if not (is_nan or is_inf) else None
+
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}] Thinker loss AFTER computation:"
+            )
+            print(f"[DIAG][Rank {local_rank}][Step {step_num}]   Value: {loss_val}")
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Is NaN: {is_nan}, Is Inf: {is_inf}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Using Liger: {self.thinker_loss_fn is not None}"
+            )
+
+            if is_nan or is_inf:
+                print(
+                    f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: Thinker loss is NaN/Inf! ***"
+                )
 
         # 2. Extract segment hidden states (from hidden_states[0] = input embeddings)
         input_embeddings = thinker_outputs.hidden_states[0]  # [batch, seq_len, hidden]
@@ -1012,6 +1192,35 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         # 7. Combine losses
         mtp_weight = getattr(self.config, "mtp_weight", 2.0)
         total_loss = thinker_loss + avg_talker_loss + (mtp_weight * avg_mtp_loss)
+
+        # === DEBUG LOGGING: Final combined loss ===
+        if step_num <= 3:
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}] ========== Final combined loss =========="
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Thinker: {thinker_loss.item():.4f}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Talker (avg): {avg_talker_loss.item():.4f}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   MTP (avg): {avg_mtp_loss.item():.4f}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   MTP weight: {mtp_weight}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   Total: {total_loss.item():.4f}"
+            )
+
+            # Check if total is NaN/Inf
+            is_nan = torch.isnan(total_loss).item()
+            is_inf = torch.isinf(total_loss).item()
+            if is_nan or is_inf:
+                print(
+                    f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: Total loss is NaN/Inf! ***"
+                )
 
         # Store for logging
         self._last_thinker_loss = thinker_loss.detach()

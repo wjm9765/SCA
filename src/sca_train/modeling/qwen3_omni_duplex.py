@@ -41,6 +41,11 @@ except ImportError:
 SPEAKER_EMBEDDING_DIM = 192
 TARGET_AUDIO_SAMPLE_RATE = 24000
 
+# Memory-safe diagnostic thresholds
+# Maximum number of elements to scan without sampling to avoid OOM
+_DIAGNOSTIC_MAX_ELEMENTS = 5_000_000  # ~40MB in bf16 (5M * 2 bytes)
+_DIAGNOSTIC_SAMPLE_SIZE = 10_000  # Number of elements to sample for diagnostics
+
 
 def _assert_valid_tensor(
     tensor: torch.Tensor,
@@ -1024,13 +1029,32 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         shift_logits = shift_logits.view(-1, shift_logits.size(-1))
         shift_labels = shift_labels.view(-1)
 
-        # === PHASE 1 DIAGNOSTICS: Validate inputs to Liger ===
+        # === PHASE 1 DIAGNOSTICS: Validate inputs to Liger (memory-efficient) ===
         if step_num <= 3:
-            logits_has_nan = torch.isnan(shift_logits).any().item()
-            logits_has_inf = torch.isinf(shift_logits).any().item()
-            logits_min = shift_logits.min().item()
-            logits_max = shift_logits.max().item()
-            logits_mean = shift_logits.mean().item()
+            logits_num_elems = shift_logits.numel()
+
+            if logits_num_elems > _DIAGNOSTIC_MAX_ELEMENTS:
+                print(
+                    f"[LIGER-IN][Rank {local_rank}][Step {step_num}] Using sampling for diagnostics (tensor too large: {logits_num_elems:,} elements)"
+                )
+
+                sample_indices = torch.randperm(
+                    logits_num_elems, device=shift_logits.device
+                )[:_DIAGNOSTIC_SAMPLE_SIZE]
+                logits_sample = shift_logits.view(-1)[sample_indices]
+
+                logits_min = logits_sample.min().item()
+                logits_max = logits_sample.max().item()
+                logits_mean = logits_sample.mean().item()
+
+                logits_has_nan = torch.isnan(logits_sample).any().item()
+                logits_has_inf = torch.isinf(logits_sample).any().item()
+            else:
+                logits_min = shift_logits.min().item()
+                logits_max = shift_logits.max().item()
+                logits_mean = shift_logits.mean().item()
+                logits_has_nan = torch.isnan(shift_logits).any().item()
+                logits_has_inf = torch.isinf(shift_logits).any().item()
 
             valid_labels = (shift_labels != -100).sum().item()
             total_labels = shift_labels.numel()
@@ -1042,9 +1066,14 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             print(
                 f"[LIGER-IN][Rank {local_rank}][Step {step_num}]   Has NaN: {logits_has_nan}, Has Inf: {logits_has_inf}"
             )
-            print(
-                f"[LIGER-IN][Rank {local_rank}][Step {step_num}]   Range: [{logits_min:.4f}, {logits_max:.4f}], Mean: {logits_mean:.4f}"
-            )
+            if logits_num_elems > _DIAGNOSTIC_MAX_ELEMENTS:
+                print(
+                    f"[LIGER-IN][Rank {local_rank}][Step {step_num}]   Range (sampled): [{logits_min:.4f}, {logits_max:.4f}], Mean: {logits_mean:.4f}"
+                )
+            else:
+                print(
+                    f"[LIGER-IN][Rank {local_rank}][Step {step_num}]   Range: [{logits_min:.4f}, {logits_max:.4f}], Mean: {logits_mean:.4f}"
+                )
             print(
                 f"[LIGER-IN][Rank {local_rank}][Step {step_num}]   Labels: valid={valid_labels}/{total_labels}"
             )
@@ -1054,33 +1083,63 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                     f"[LIGER-IN][Rank {local_rank}][Step {step_num}]   *** WARNING: ALL LABELS ARE -100! ***"
                 )
 
-        # === PHASE 3 DIAGNOSTICS: Monitor gradients from Liger ===
+        # === PHASE 3 DIAGNOSTICS: Monitor gradients from Liger (memory-efficient) ===
         if step_num <= 3:
 
             def logits_grad_hook(grad):
                 if grad is not None:
-                    has_nan = torch.isnan(grad).any().item()
-                    has_inf = torch.isinf(grad).any().item()
-                    print(
-                        f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}] Logits gradient hook:"
-                    )
+                    grad_num_elems = grad.numel()
+
+                    if grad_num_elems > _DIAGNOSTIC_MAX_ELEMENTS:
+                        has_nan = (
+                            torch.isnan(grad.view(-1)[:_DIAGNOSTIC_SAMPLE_SIZE])
+                            .any()
+                            .item()
+                        )
+                        has_inf = (
+                            torch.isinf(grad.view(-1)[:_DIAGNOSTIC_SAMPLE_SIZE])
+                            .any()
+                            .item()
+                        )
+                        print(
+                            f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}] Logits gradient hook (sampled check):"
+                        )
+                    else:
+                        has_nan = torch.isnan(grad).any().item()
+                        has_inf = torch.isinf(grad).any().item()
+                        print(
+                            f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}] Logits gradient hook:"
+                        )
                     print(
                         f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}]   Has NaN: {has_nan}, Has Inf: {has_inf}"
                     )
 
                     if has_nan:
-                        nan_count = torch.isnan(grad).sum().item()
-                        total_elems = grad.numel()
-                        print(
-                            f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}]   *** NaN count: {nan_count}/{total_elems} ***"
-                        )
+                        if grad_num_elems > _DIAGNOSTIC_MAX_ELEMENTS:
+                            print(
+                                f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}]   *** NaN detected in sampled check (tensor too large: {grad_num_elems:,} elements) ***"
+                            )
+                            print(
+                                f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}]   Skipping full NaN count and position reporting to avoid OOM"
+                            )
+                        else:
+                            nan_count = torch.isnan(grad).sum().item()
+                            total_elems = grad.numel()
+                            print(
+                                f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}]   *** NaN count: {nan_count}/{total_elems} ***"
+                            )
 
-                        nan_positions = torch.nonzero(
-                            torch.isnan(grad), as_tuple=False
-                        )[:5]
-                        print(
-                            f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}]   First 5 NaN positions: {nan_positions.tolist()}"
-                        )
+                            nan_flat = torch.isnan(grad).view(-1)
+                            nan_indices = torch.where(nan_flat)[0][:5]
+                            if nan_indices.numel() > 0:
+                                nan_positions_list = []
+                                for idx in nan_indices:
+                                    row = int(idx // grad.size(-1))
+                                    col = int(idx % grad.size(-1))
+                                    nan_positions_list.append([row, col])
+                                print(
+                                    f"[LIGER-GRAD][Rank {local_rank}][Step {step_num}]   First 5 NaN positions: {nan_positions_list}"
+                                )
                 return grad
 
             shift_logits.register_hook(logits_grad_hook)

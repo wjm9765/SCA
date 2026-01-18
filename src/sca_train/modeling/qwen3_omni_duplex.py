@@ -683,25 +683,19 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         )
 
         # Get embeddings for all layers (for teacher forcing)
-        # Convert to FP32 for stability in summation to prevent BF16 overflow
         layer0_embeddings = self.talker.get_input_embeddings()(
             layer0_codes.to(self.device)
-        ).float()
+        )
 
         unwrapped_code_predictor = self._get_unwrapped_code_predictor()
         predictor_embeds = unwrapped_code_predictor.get_input_embeddings()
-        # Convert all predictor embeddings to FP32 for stability
-        predictor_embeds_fp32 = [emb.float() for emb in predictor_embeds]
 
-        # Sum embeddings from all layers in FP32 to prevent overflow
+        # Sum embeddings from all layers
         all_layer_embeds_sum = layer0_embeddings.clone()
-        for j in range(len(predictor_embeds_fp32)):
+        for j in range(len(predictor_embeds)):
             layer_j_codes = target_codes[:, j + 1, :]
-            emb_fp32 = predictor_embeds_fp32[j](layer_j_codes.to(self.device))
-            all_layer_embeds_sum = all_layer_embeds_sum + emb_fp32
-
-        # Convert back to target dtype for downstream operations
-        all_layer_embeds_sum = all_layer_embeds_sum.to(self.talker.dtype)
+            emb = predictor_embeds[j](layer_j_codes.to(self.device))
+            all_layer_embeds_sum = all_layer_embeds_sum + emb
 
         # Build codec input sequence (teacher forcing)
         trailing_len = trailing_text_hidden.shape[1]

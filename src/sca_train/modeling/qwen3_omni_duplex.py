@@ -1038,9 +1038,12 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                     f"[LIGER-IN][Rank {local_rank}][Step {step_num}] Using sampling for diagnostics (tensor too large: {logits_num_elems:,} elements)"
                 )
 
-                sample_indices = torch.randperm(
-                    logits_num_elems, device=shift_logits.device
-                )[:_DIAGNOSTIC_SAMPLE_SIZE]
+                sample_indices = torch.randint(
+                    0,
+                    logits_num_elems,
+                    (_DIAGNOSTIC_SAMPLE_SIZE,),
+                    device=shift_logits.device,
+                )
                 logits_sample = shift_logits.view(-1)[sample_indices]
 
                 logits_min = logits_sample.min().item()

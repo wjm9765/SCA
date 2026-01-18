@@ -24,9 +24,9 @@ max_segments_per_batch: 8
 # LoRA configuration
 lora_config:
   use_qlora: true
-  r: 64
   use_dora: false
-  lora_alpha: 64
+  r: 16
+  lora_alpha: 16
   target_modules_regex: ".*(thinker|talker)\\.model\\.layers\\.\\d+\\.self_attn\\.(q|k|v|o)_proj$"
   lora_dropout: 0.05
   lora_bias: "none"

@@ -690,12 +690,16 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         unwrapped_code_predictor = self._get_unwrapped_code_predictor()
         predictor_embeds = unwrapped_code_predictor.get_input_embeddings()
 
-        # Sum embeddings from all layers
-        all_layer_embeds_sum = layer0_embeddings.clone()
+        # Sum embeddings from all layers in FP32 to prevent BF16 overflow
+        # BF16 has limited exponent range; summing 16 layers can overflow
+        all_layer_embeds_sum = layer0_embeddings.to(torch.float32).clone()
         for j in range(len(predictor_embeds)):
             layer_j_codes = target_codes[:, j + 1, :]
             emb = predictor_embeds[j](layer_j_codes.to(self.device))
-            all_layer_embeds_sum = all_layer_embeds_sum + emb
+            all_layer_embeds_sum = all_layer_embeds_sum + emb.to(torch.float32)
+
+        # Cast back to BF16 for talker forward pass
+        all_layer_embeds_sum = all_layer_embeds_sum.to(self.talker.dtype)
 
         # Build codec input sequence (teacher forcing)
         trailing_len = trailing_text_hidden.shape[1]

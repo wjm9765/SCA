@@ -8,7 +8,7 @@ verbose: 4
 
 # Model settings
 gradient_checkpointing: false  # Turn off when using FSDP
-attn_impl: "flash_attention_2"
+attn_impl: "eager"
 train_mtp: true
 mtp_weight: 2.0
 max_length: 32768

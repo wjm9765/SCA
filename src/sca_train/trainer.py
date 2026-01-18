@@ -138,33 +138,110 @@ class QwenTrainer(Trainer):
             has_inf = False
             nan_params = []
             inf_params = []
+
+            # Group NaN/Inf params by component for detailed analysis
+            component_nan_params: Dict[str, list] = {}
+            component_inf_params: Dict[str, list] = {}
+            component_trainable_counts: Dict[str, int] = {}
+            component_nan_counts: Dict[str, int] = {}
+            component_inf_counts: Dict[str, int] = {}
+
             for name, p in model.named_parameters():
                 if p.grad is not None:
-                    # Memory-safe check for any NaN/Inf
+                    # Extract component name (thinker, talker, speaker_projection, etc.)
+                    parts = name.split(".")
+                    if len(parts) >= 2:
+                        component = parts[0]
+                        subcomponent = parts[1] if len(parts) >= 2 else ""
+                        full_component = f"{component}.{subcomponent}"
+                    else:
+                        component = name
+                        full_component = name
+
+                    # Track trainable params per component
+                    if full_component not in component_trainable_counts:
+                        component_trainable_counts[full_component] = 0
+                        component_nan_counts[full_component] = 0
+                        component_inf_counts[full_component] = 0
+                    component_trainable_counts[full_component] += 1
+
+                    # Check for NaN/Inf
                     p_grad_max = p.grad.data.abs().max().item()
-                    if torch.isnan(torch.tensor(p_grad_max)):
+                    is_nan = torch.isnan(torch.tensor(p_grad_max))
+                    is_inf = torch.isinf(torch.tensor(p_grad_max))
+
+                    if is_nan:
                         has_nan = True
                         nan_params.append(name)
-                    elif torch.isinf(torch.tensor(p_grad_max)):
+                        component_nan_params.setdefault(full_component, []).append(name)
+                        component_nan_counts[full_component] += 1
+                    elif is_inf:
                         has_inf = True
                         inf_params.append(name)
+                        component_inf_params.setdefault(full_component, []).append(name)
+                        component_inf_counts[full_component] += 1
 
             if has_nan or has_inf:
                 print(
                     f"[GRAD][Rank {local_rank}][Step {self.state.global_step}] "
-                    f"*** ERROR: Gradients contain NaN: {has_nan}, Inf: {has_inf} ***"
+                    f"=== NaN/Inf Gradient Analysis ==="
                 )
-                if nan_params:
-                    # Show first 10 NaN parameters
-                    print(
-                        f"[GRAD][Rank {local_rank}][Step {self.state.global_step}] "
-                        f"First 10 NaN parameters: {nan_params[:10]}"
-                    )
+                print(
+                    f"[GRAD][Rank {local_rank}][Step {self.state.global_step}] "
+                    f"Total NaN params: {len(nan_params)}, Total Inf params: {len(inf_params)}"
+                )
+
+                # Show detailed breakdown by component
+                print(
+                    f"[GRAD][Rank {local_rank}][Step {self.state.global_step}] "
+                    f"NaN/Inf by Component:"
+                )
+
+                # Sort components by total NaN+Inf count
+                sorted_components = sorted(
+                    component_nan_counts.keys(),
+                    key=lambda c: component_nan_counts[c] + component_inf_counts[c],
+                    reverse=True,
+                )
+
+                for comp in sorted_components:
+                    nan_count = component_nan_counts[comp]
+                    inf_count = component_inf_counts[comp]
+                    trainable_count = component_trainable_counts[comp]
+                    total_affected = nan_count + inf_count
+
+                    if total_affected > 0:
+                        percentage = (total_affected / trainable_count) * 100
+                        print(
+                            f"[GRAD][Rank {local_rank}][Step {self.state.global_step}]   "
+                            f"{comp}: {total_affected}/{trainable_count} trainable params ({percentage:.1f}%) "
+                            f"[NaN: {nan_count}, Inf: {inf_count}]"
+                        )
+
+                # Show all NaN parameters (grouped by component)
+                print(
+                    f"[GRAD][Rank {local_rank}][Step {self.state.global_step}] "
+                    f"All NaN parameters:"
+                )
+                for comp in sorted_components:
+                    if comp in component_nan_params and component_nan_params[comp]:
+                        print(
+                            f"[GRAD][Rank {local_rank}][Step {self.state.global_step}]   "
+                            f"[{comp}]: {component_nan_params[comp]}"
+                        )
+
+                # Show all Inf parameters if any
                 if inf_params:
                     print(
                         f"[GRAD][Rank {local_rank}][Step {self.state.global_step}] "
-                        f"First 10 Inf parameters: {inf_params[:10]}"
+                        f"All Inf parameters:"
                     )
+                    for comp in sorted_components:
+                        if comp in component_inf_params and component_inf_params[comp]:
+                            print(
+                                f"[GRAD][Rank {local_rank}][Step {self.state.global_step}]   "
+                                f"[{comp}]: {component_inf_params[comp]}"
+                            )
 
         return loss
 

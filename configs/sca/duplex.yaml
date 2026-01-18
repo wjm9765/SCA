@@ -7,7 +7,7 @@ train_output_dir: "./SCA_duplex_finetune"
 verbose: 4
 
 # Model settings
-gradient_checkpointing: true  # Enable gradient checkpointing for FSDP
+gradient_checkpointing: true  # Enable manual gradient checkpointing for Talker layers
 attn_impl: "flash_attention_2"
 train_mtp: true
 mtp_weight: 2.0

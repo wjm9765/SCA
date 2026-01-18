@@ -37,12 +37,11 @@ def train(config: SCATrainingConfig):
     grad_ckpt = config.gradient_checkpointing
     if is_fsdp():
         device_map = None
-        if config.gradient_checkpointing:
-            config.gradient_checkpointing = False
-            logger.debug(
-                config,
-                "FSDP detected: Overriding config.gradient_checkpointing to False (Managed by FSDP Config)",
-            )
+        # Keep gradient_checkpointing enabled for FSDP activation checkpointing
+        logger.debug(
+            config,
+            "FSDP detected: gradient_checkpointing will be enabled via prepare_model_for_kbit_training",
+        )
     else:
         device_map = {"": local_rank}
     logger.debug(

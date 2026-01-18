@@ -764,6 +764,63 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         seq_len = full_inputs_embeds.shape[1]
         attention_mask = torch.ones((1, seq_len), dtype=torch.long, device=self.device)
 
+        # === DIAGNOSTICS: Check Talker inputs for NaN before forward pass ===
+        step_num = self._debug_step_count
+        if step_num <= 3:
+            local_rank = (
+                torch.distributed.get_rank()
+                if torch.distributed.is_initialized()
+                else 0
+            )
+
+            # Check all inputs to Talker layer 0
+            print(f"[DIAG][Rank {local_rank}][Step {step_num}] Talker layer 0 inputs:")
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   prefix_embed has NaN: {torch.isnan(prefix_embed).any().item()}, Has Inf: {torch.isinf(prefix_embed).any().item()}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   prefix_embed shape: {prefix_embed.shape}, dtype: {prefix_embed.dtype}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   prefix_embed range: [{prefix_embed.min():.4f}, {prefix_embed.max():.4f}]"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   codec_input_embeds has NaN: {torch.isnan(codec_input_embeds).any().item() if len(codec_input_embeds_list) > 0 else 'N/A (no codec embeds)'}"
+            )
+            if len(codec_input_embeds_list) > 0:
+                print(
+                    f"[DIAG][Rank {local_rank}][Step {step_num}]   codec_input_embeds range: [{codec_input_embeds.min():.4f}, {codec_input_embeds.max():.4f}]"
+                )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   full_inputs_embeds has NaN: {torch.isnan(full_inputs_embeds).any().item()}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   full_inputs_embeds range: [{full_inputs_embeds.min():.4f}, {full_inputs_embeds.max():.4f}]"
+            )
+
+            # Check trailing_text_hidden
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   trailing_text_hidden has NaN: {torch.isnan(trailing_text_hidden).any().item()}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   trailing_text_hidden range: [{trailing_text_hidden.min():.4f}, {trailing_text_hidden.max():.4f}]"
+            )
+
+            # Check tts_pad_embed
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   tts_pad_embed has NaN: {torch.isnan(tts_pad_embed).any().item()}"
+            )
+
+            # Check all_layer_embeds_sum (FP32 summation result)
+            # Re-check in current dtype
+            all_layer_embeds_sum_check = all_layer_embeds_sum.to(torch.float32)
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   all_layer_embeds_sum has NaN: {torch.isnan(all_layer_embeds_sum_check).any().item()}"
+            )
+            print(
+                f"[DIAG][Rank {local_rank}][Step {step_num}]   all_layer_embeds_sum range: [{all_layer_embeds_sum_check.min():.4f}, {all_layer_embeds_sum_check.max():.4f}]"
+            )
+
         # Forward through Talker
         talker_outputs = self.talker(
             inputs_embeds=full_inputs_embeds,

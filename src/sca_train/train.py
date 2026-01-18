@@ -7,6 +7,7 @@ import gc
 from pathlib import Path
 
 import torch
+from torch.utils.checkpoint import checkpoint
 from peft import LoraConfig, get_peft_model
 from transformers import (
     Qwen3OmniMoeProcessor,
@@ -23,6 +24,37 @@ from .trainer import QwenTrainer
 from .utils import is_fsdp, prepare_model_for_kbit_training, get_local_rank
 from .config.loader import load_config
 from .modeling import Qwen3OmniMoeWithProperForward, Qwen3OmniMoeWithProperForwardConfig
+
+
+def apply_talker_gradient_checkpointing(model, config: SCATrainingConfig | None = None):
+    """Apply gradient checkpointing to all Talker decoder layers.
+
+    This manually checkpoints each Talker layer to break the gradient chain
+    and reduce memory usage during training. Checkpointing recomputes activations
+    during the backward pass instead of storing them.
+
+    Args:
+        model: The Qwen3OmniMoeWithProperForward model (after PEFT wrapping).
+        config: Optional SCATrainingConfig for logging.
+    """
+    if not hasattr(model, "talker") or not hasattr(model.talker, "model"):
+        if get_local_rank() == 0 and config is not None:
+            logger.debug(
+                config,
+                "No Talker found, skipping checkpointing",
+            )
+        return
+
+    checkpoint_count = 0
+    for i, layer in enumerate(model.talker.model.layers):
+        model.talker.model.layers[i] = checkpoint(layer, use_reentrant=False)
+        checkpoint_count += 1
+
+    if get_local_rank() == 0 and config is not None:
+        logger.debug(
+            config,
+            f"Applied gradient checkpointing to {checkpoint_count} Talker layers",
+        )
 
 
 def train(config: SCATrainingConfig):
@@ -239,6 +271,11 @@ def train(config: SCATrainingConfig):
             raise RuntimeError(
                 "CRITICAL: LoRA was not created! Check get_peft_model call and regex."
             )
+
+    # Apply manual gradient checkpointing to all Talker layers
+    # This breaks the gradient chain and reduces memory usage
+    if grad_ckpt:
+        apply_talker_gradient_checkpointing(model, config)
 
     if get_local_rank() == 0:
         lora_params = []

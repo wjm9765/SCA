@@ -133,21 +133,38 @@ class QwenTrainer(Trainer):
                 f"Clip threshold: {max_grad_norm}"
             )
 
-            # Check for NaN/Inf in gradients
+            # Check for NaN/Inf in gradients and report names
             has_nan = False
             has_inf = False
-            for p in model.parameters():
+            nan_params = []
+            inf_params = []
+            for name, p in model.named_parameters():
                 if p.grad is not None:
-                    if torch.isnan(p.grad).any():
+                    # Memory-safe check for any NaN/Inf
+                    p_grad_max = p.grad.data.abs().max().item()
+                    if torch.isnan(torch.tensor(p_grad_max)):
                         has_nan = True
-                    if torch.isinf(p.grad).any():
+                        nan_params.append(name)
+                    elif torch.isinf(torch.tensor(p_grad_max)):
                         has_inf = True
+                        inf_params.append(name)
 
             if has_nan or has_inf:
                 print(
                     f"[GRAD][Rank {local_rank}][Step {self.state.global_step}] "
                     f"*** ERROR: Gradients contain NaN: {has_nan}, Inf: {has_inf} ***"
                 )
+                if nan_params:
+                    # Show first 10 NaN parameters
+                    print(
+                        f"[GRAD][Rank {local_rank}][Step {self.state.global_step}] "
+                        f"First 10 NaN parameters: {nan_params[:10]}"
+                    )
+                if inf_params:
+                    print(
+                        f"[GRAD][Rank {local_rank}][Step {self.state.global_step}] "
+                        f"First 10 Inf parameters: {inf_params[:10]}"
+                    )
 
         return loss
 

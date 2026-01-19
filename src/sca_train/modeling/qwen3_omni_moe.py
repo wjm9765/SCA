@@ -88,7 +88,7 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
 
         return code_predictor
 
-    def _get_talker_assistant_parts(
+    def _get_talker_assistant_parts(  # type: ignore[override]
         self,
         im_start_index,
         segment_end_index,
@@ -205,11 +205,14 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         NOTE: Expects audios to be at 24kHz (Mimi's native sampling rate).
         User audios for Thinker remain at 16kHz (Qwen-Audio standard).
         """
+        if self.mimi_model is None or self.mimi_feature_extractor is None:
+            raise RuntimeError("Mimi model not loaded. Call load_mimi_model() first.")
+
         # Ensure mimi_model is on the correct device (lazy move)
         # Use next(parameters()).device to get actual device
         mimi_device = next(self.mimi_model.parameters()).device
         if mimi_device != self.device:
-            self.mimi_model = self.mimi_model.to(self.device)  # type: ignore[arg-type]
+            self.mimi_model = self.mimi_model.to(self.device)
 
         processed_audios = []
         for audio in audios:
@@ -871,9 +874,9 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
                 # where hidden_states_tuple[0] is the standard tuple of layer outputs
                 # hidden_states_tuple[0][-1] gives the last layer's output tensor
                 if isinstance(talker_outputs.hidden_states, tuple):
-                    talker_hidden = talker_outputs.hidden_states[0][-1]  # type: ignore[index]
+                    talker_hidden = talker_outputs.hidden_states[0][-1]
                 else:
-                    talker_hidden = talker_outputs.hidden_states[-1]  # type: ignore[index]
+                    talker_hidden = talker_outputs.hidden_states[-1]
 
                 # Extract hidden states for codec token positions
                 # CRITICAL: Need to extract per-sample using original_prefix_lens
@@ -1008,7 +1011,7 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         )
 
     @torch.no_grad()
-    def generate(
+    def generate(  # type: ignore[override]
         self,
         input_ids: Optional[torch.Tensor] = None,
         speaker_embedding: Optional[torch.Tensor] = None,
@@ -1145,6 +1148,9 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         # ========================================
         # Step 1: Thinker Generation (Text)
         # ========================================
+        if input_ids is None:
+            raise ValueError("input_ids cannot be None for generate")
+
         generate_audio = return_audio and self.has_talker
         if generate_audio:
             thinker_kwargs["output_hidden_states"] = True
@@ -1268,7 +1274,7 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
                     )
                 else:
                     # Fallback to discrete speaker ID (original behavior)
-                    speaker_id = self.config.talker_config.speaker_id.get(
+                    speaker_id = self.config.talker_config.speaker_id.get(  # type: ignore[union-attr]
                         speaker.lower()
                     )
                     if speaker_id is None:

@@ -192,7 +192,11 @@ def main():
 
     # Extract trained weights
     print("\n[4/5] Extracting trained weights...")
-    trained_weights = extract_trained_weights(state_dict, lora_config.modules_to_save)
+    assert isinstance(state_dict, dict), "state_dict must be a dict"
+    trained_weights = extract_trained_weights(
+        state_dict,  # type: ignore[arg-type]
+        lora_config.modules_to_save,
+    )
 
     lora_count = sum(1 for k in trained_weights if "lora_" in k)
     module_count = len(trained_weights) - lora_count

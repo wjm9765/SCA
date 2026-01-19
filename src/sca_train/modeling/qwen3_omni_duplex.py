@@ -871,7 +871,7 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             (1, prefix_len - 1), -100, dtype=torch.long, device=self.device
         )
         label_code0 = layer0_codes[:, 0:1]
-        label_code_rest = layer0_codes[:, :-1]
+        label_code_rest = layer0_codes[:, 1:]
         label_eos = torch.full(
             (1, 1), codec_eos_id, dtype=torch.long, device=self.device
         )

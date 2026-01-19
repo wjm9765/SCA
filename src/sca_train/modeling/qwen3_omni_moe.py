@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from transformers import (
     Qwen3OmniMoeForConditionalGeneration,
     AutoFeatureExtractor,
@@ -39,6 +40,9 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         speaker_embed_dim = 192  # ECAPA-TDNN output dimension
         talker_hidden_size = self.config.talker_config.text_config.hidden_size
         self.speaker_projection = nn.Linear(speaker_embed_dim, talker_hidden_size)
+        nn.init.xavier_uniform_(self.speaker_projection.weight)
+        if self.speaker_projection.bias is not None:
+            nn.init.zeros_(self.speaker_projection.bias)
 
     def load_mimi_model(self) -> None:
         """Load Mimi model and feature extractor.
@@ -116,10 +120,13 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         Returns:
             Tuple of (input_embeds, input_ids, trailing_text_hidden)
         """
+
         # Project speaker embedding to talker hidden size
-        projected_speaker = self.speaker_projection(
-            speaker_embedding
-        )  # [1, talker_hidden_size]
+        # Use FP32 computation + checkpointing to prevent NaN gradients
+        def project_speaker():
+            return self.speaker_projection(speaker_embedding.to(torch.float32))
+
+        projected_speaker = checkpoint(project_speaker, use_reentrant=False)
 
         assistant_hidden = self.talker.text_projection(
             thinker_embed[:, im_start_index:segment_end_index]

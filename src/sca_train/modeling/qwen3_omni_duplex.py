@@ -17,7 +17,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
 from transformers import (
     AutoFeatureExtractor,
     MimiModel,
@@ -698,15 +697,10 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         )
 
         # Replace speaker position with projected speaker embedding
-        # Use FP32 computation + checkpointing to prevent NaN gradients
-        def project_speaker(x):
-            return self.speaker_projection(x.to(torch.float32)).to(
-                codec_embeds_raw.dtype
-            )
-
-        projected_speaker = checkpoint(
-            project_speaker, speaker_embedding, use_reentrant=False
-        )
+        # Use FP32 computation for numerical stability (no checkpointing needed for small layer)
+        projected_speaker = self.speaker_projection(
+            speaker_embedding.to(torch.float32)
+        ).to(codec_embeds_raw.dtype)
         codec_embeds = torch.cat(
             [
                 codec_embeds_raw[:, :3, :],  # nothink, think_bos, think_eos
@@ -836,6 +830,8 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         for pos in range(num_codec_tokens):
             if pos == 0:
+                pos_embed = all_layer_embeds_sum[:, pos : pos + 1, :]
+                codec_input_embeds_list.append(pos_embed)
                 continue
             prev_pos = pos - 1
             if prev_pos < trailing_len:
@@ -875,7 +871,7 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             (1, prefix_len - 1), -100, dtype=torch.long, device=self.device
         )
         label_code0 = layer0_codes[:, 0:1]
-        label_code_rest = layer0_codes[:, 1:]
+        label_code_rest = layer0_codes[:, :-1]
         label_eos = torch.full(
             (1, 1), codec_eos_id, dtype=torch.long, device=self.device
         )

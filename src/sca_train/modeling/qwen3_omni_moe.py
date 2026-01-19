@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
 from transformers import (
     Qwen3OmniMoeForConditionalGeneration,
     AutoFeatureExtractor,
@@ -122,13 +121,8 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
         """
 
         # Project speaker embedding to talker hidden size
-        # Use FP32 computation + checkpointing to prevent NaN gradients
-        def project_speaker(x):
-            return self.speaker_projection(x.to(torch.float32))
-
-        projected_speaker = checkpoint(
-            project_speaker, speaker_embedding, use_reentrant=False
-        )
+        # Use FP32 computation for numerical stability (no checkpointing needed for small layer)
+        projected_speaker = self.speaker_projection(speaker_embedding.to(torch.float32))
 
         assistant_hidden = self.talker.text_projection(
             thinker_embed[:, im_start_index:segment_end_index]

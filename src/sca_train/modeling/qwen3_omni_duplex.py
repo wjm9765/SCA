@@ -699,12 +699,14 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         # Replace speaker position with projected speaker embedding
         # Use FP32 computation + checkpointing to prevent NaN gradients
-        def project_speaker():
-            return self.speaker_projection(speaker_embedding.to(torch.float32)).to(
+        def project_speaker(x):
+            return self.speaker_projection(x.to(torch.float32)).to(
                 codec_embeds_raw.dtype
             )
 
-        projected_speaker = checkpoint(project_speaker, use_reentrant=False)
+        projected_speaker = checkpoint(
+            project_speaker, speaker_embedding, use_reentrant=False
+        )
         codec_embeds = torch.cat(
             [
                 codec_embeds_raw[:, :3, :],  # nothink, think_bos, think_eos

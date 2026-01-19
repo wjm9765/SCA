@@ -225,29 +225,92 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         These are pretrained from Mimi and should not be trained to avoid
         numerical instability that causes NaN in backward pass.
         """
+        import torch
+
+        print("[_freeze_codec_embeddings] Starting...")
+
         if self.talker is None:
+            print("[_freeze_codec_embeddings] Skipping - talker is None")
             return
 
         frozen_count = 0
 
-        if hasattr(self.talker, "get_input_embeddings"):
-            talker_embeds = self.talker.get_input_embeddings()
-            if hasattr(talker_embeds, "weight") and talker_embeds.weight.requires_grad:
-                talker_embeds.weight.requires_grad_(False)
-                frozen_count += 1
+        with torch.no_grad():
+            # Freeze talker input embeddings
+            if hasattr(self.talker, "get_input_embeddings"):
+                talker_embeds = self.talker.get_input_embeddings()
+                print(
+                    f"[_freeze_codec_embeddings] talker_embeds type: {type(talker_embeds)}"
+                )
+                if hasattr(talker_embeds, "weight"):
+                    print(
+                        f"[_freeze_codec_embeddings] talker_embeds.weight.requires_grad: {talker_embeds.weight.requires_grad}"
+                    )
+                if (
+                    hasattr(talker_embeds, "weight")
+                    and talker_embeds.weight.requires_grad
+                ):
+                    talker_embeds.weight.requires_grad_(False)
+                    frozen_count += 1
+                    print("[_freeze_codec_embeddings] Froze talker input embeddings")
 
-        unwrapped_predictor = self._get_unwrapped_code_predictor()
-        if unwrapped_predictor is not None and hasattr(
-            unwrapped_predictor, "get_input_embeddings"
-        ):
-            mtp_embeds = unwrapped_predictor.get_input_embeddings()
-            if hasattr(mtp_embeds, "__iter__"):
-                for embed in mtp_embeds:
-                    if hasattr(embed, "weight") and embed.weight.requires_grad:
-                        embed.weight.requires_grad_(False)
+            code_predictor = self.talker.code_predictor
+            print(
+                f"[_freeze_codec_embeddings] code_predictor type: {type(code_predictor)}"
+            )
+            print(
+                f"[_freeze_codec_embeddings] has modules_to_save: {hasattr(code_predictor, 'modules_to_save')}"
+            )
+
+            if hasattr(code_predictor, "modules_to_save"):
+                active_adapter = getattr(
+                    code_predictor, "active_adapters", ["thinker"]
+                )[0]
+                print(f"[_freeze_codec_embeddings] active_adapter: {active_adapter}")
+                print(
+                    f"[_freeze_codec_embeddings] modules_to_save keys: {list(code_predictor.modules_to_save.keys())}"
+                )
+
+                if active_adapter in code_predictor.modules_to_save:
+                    predictor_module = code_predictor.modules_to_save[active_adapter]
+                    print(
+                        f"[_freeze_codec_embeddings] predictor_module type: {type(predictor_module)}"
+                    )
+
+                    if hasattr(predictor_module, "get_input_embeddings"):
+                        mtp_embeds = predictor_module.get_input_embeddings()
+                        print(
+                            f"[_freeze_codec_embeddings] mtp_embeds type: {type(mtp_embeds)}, len: {len(mtp_embeds) if hasattr(mtp_embeds, '__len__') else 'N/A'}"
+                        )
+
+                        if hasattr(mtp_embeds, "__iter__"):
+                            for i, embed in enumerate(mtp_embeds):
+                                if hasattr(embed, "weight"):
+                                    if embed.weight.requires_grad:
+                                        embed.weight.requires_grad_(False)
+                                        frozen_count += 1
+                                if (
+                                    hasattr(embed, "bias")
+                                    and embed.bias is not None
+                                    and embed.bias.requires_grad
+                                ):
+                                    embed.bias.requires_grad_(False)
+                                    frozen_count += 1
+
+            # Zero any existing gradients on codec embedding params
+            for name, param in self.talker.named_parameters():
+                if "codec_embedding" in name:
+                    print(
+                        f"[_freeze_codec_embeddings] Found codec_embedding param: {name}, requires_grad: {param.requires_grad}, grad: {param.grad is not None}"
+                    )
+                    if param.grad is not None:
+                        param.grad.zero_()
                         frozen_count += 1
+                        print(f"[_freeze_codec_embeddings] Zeroed gradient for {name}")
 
-        print(f"Froze {frozen_count} codec embedding layers")
+        print(
+            f"[_freeze_codec_embeddings] Froze {frozen_count} codec embedding layers/components"
+        )
 
     def _get_unwrapped_code_predictor(self):
         """Get code_predictor unwrapped from PEFT wrapper if present."""

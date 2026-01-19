@@ -203,11 +203,6 @@ def train(config: SCATrainingConfig):
         model.speaker_projection.requires_grad_(True)
         logger.debug(config, "Unfrozen speaker_projection for voice cloning")
 
-    # Freeze codec embeddings to prevent NaN gradients
-    if hasattr(model, "_freeze_codec_embeddings"):
-        model._freeze_codec_embeddings()
-        logger.debug(config, "Frozen codec embeddings (Mimi pretrained)")
-
     if hasattr(model, "mimi_model"):
         model.mimi_model.requires_grad_(False)
     if hasattr(model, "code2wav"):
@@ -285,6 +280,11 @@ def train(config: SCATrainingConfig):
             raise RuntimeError(
                 "CRITICAL: LoRA was not created! Check get_peft_model call and regex."
             )
+
+    # Freeze codec embeddings AFTER LoRA is applied to prevent NaN gradients
+    if hasattr(model, "_freeze_codec_embeddings"):
+        model._freeze_codec_embeddings()
+        logger.debug(config, "Frozen codec embeddings (Mimi pretrained)")
 
     # Apply manual gradient checkpointing to all Talker layers
     # This breaks the gradient chain and reduces memory usage

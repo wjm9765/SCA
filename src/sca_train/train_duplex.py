@@ -191,11 +191,6 @@ def train_duplex(config: SCADuplexTrainingConfig):
         model.speaker_projection.requires_grad_(True)
         logger.debug(config, "Unfrozen speaker_projection for voice cloning")
 
-    # Freeze codec embeddings to prevent NaN gradients
-    if hasattr(model, "_freeze_codec_embeddings"):
-        model._freeze_codec_embeddings()
-        logger.debug(config, "Frozen codec embeddings (Mimi pretrained)")
-
     # Keep these frozen
     if hasattr(model, "mimi_model") and model.mimi_model is not None:
         model.mimi_model.requires_grad_(False)
@@ -263,6 +258,11 @@ def train_duplex(config: SCADuplexTrainingConfig):
 
     if get_local_rank() == 0 and config.verbose >= config.verbose.INFO:
         model.print_trainable_parameters()
+
+    # Freeze codec embeddings AFTER LoRA is applied to prevent NaN gradients
+    if hasattr(model, "_freeze_codec_embeddings"):
+        model._freeze_codec_embeddings()
+        logger.debug(config, "Frozen codec embeddings (Mimi pretrained)")
 
     # Clean up memory
     logger.debug(config, "Cleaning up memory")

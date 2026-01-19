@@ -17,6 +17,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from transformers import (
     AutoFeatureExtractor,
     MimiModel,
@@ -163,6 +164,9 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         speaker_embed_dim = 192
         talker_hidden_size = self.config.talker_config.text_config.hidden_size
         self.speaker_projection = nn.Linear(speaker_embed_dim, talker_hidden_size)
+        nn.init.xavier_uniform_(self.speaker_projection.weight)
+        if self.speaker_projection.bias is not None:
+            nn.init.zeros_(self.speaker_projection.bias)
 
         # Liger cross-entropy for memory-efficient Thinker loss
         # Uses Triton kernels to avoid float32 upcast that causes OOM with large vocab
@@ -694,9 +698,13 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         )
 
         # Replace speaker position with projected speaker embedding
-        projected_speaker = self.speaker_projection(speaker_embedding).to(
-            codec_embeds_raw.dtype
-        )
+        # Use FP32 computation + checkpointing to prevent NaN gradients
+        def project_speaker():
+            return self.speaker_projection(speaker_embedding.to(torch.float32)).to(
+                codec_embeds_raw.dtype
+            )
+
+        projected_speaker = checkpoint(project_speaker, use_reentrant=False)
         codec_embeds = torch.cat(
             [
                 codec_embeds_raw[:, :3, :],  # nothink, think_bos, think_eos

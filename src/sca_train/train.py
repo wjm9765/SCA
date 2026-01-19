@@ -50,10 +50,19 @@ def apply_talker_gradient_checkpointing(model, config: SCATrainingConfig | None 
         model.talker.model.layers[i] = checkpoint(layer, use_reentrant=False)
         checkpoint_count += 1
 
+    # Checkpoint code_predictor decoder layers (fixes codec_embedding NaN)
+    if hasattr(model.talker, "code_predictor") and hasattr(
+        model.talker.code_predictor, "model"
+    ):
+        code_predictor_layers = model.talker.code_predictor.model.layers
+        for i, layer in enumerate(code_predictor_layers):
+            code_predictor_layers[i] = checkpoint(layer, use_reentrant=False)
+            checkpoint_count += 1
+
     if get_local_rank() == 0 and config is not None:
         logger.debug(
             config,
-            f"Applied gradient checkpointing to {checkpoint_count} Talker layers",
+            f"Applied gradient checkpointing to {checkpoint_count} Talker + code_predictor layers",
         )
 
 

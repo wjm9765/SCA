@@ -17,6 +17,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from transformers import (
     AutoFeatureExtractor,
     MimiModel,
@@ -641,6 +642,33 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         return prefix_embed, trailing_text_hidden, tts_pad_embed
 
+    def _compute_codec_embeddings(
+        self,
+        target_codes: torch.Tensor,
+        predictor_embeds: nn.ModuleList,
+        layer0_embeddings: torch.Tensor,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """Compute codec embeddings for checkpointing - breaks gradient chain.
+
+        Args:
+            target_codes: [1, 16, num_frames] - Target Mimi codes.
+            predictor_embeds: List of embedding layers for each codec layer.
+            layer0_embeddings: [1, seq_len, hidden_dim] - Layer 0 embeddings.
+            device: Device to compute on.
+            dtype: Target dtype for output.
+
+        Returns:
+            all_layer_embeds_sum: [1, seq_len, hidden_dim] - Summed embeddings.
+        """
+        all_layer_embeds_sum = layer0_embeddings.to(torch.float32).clone()
+        for j in range(len(predictor_embeds)):
+            layer_j_codes = target_codes[:, j + 1, :]
+            emb = predictor_embeds[j](layer_j_codes.to(device))
+            all_layer_embeds_sum = all_layer_embeds_sum + emb.to(torch.float32)
+        return all_layer_embeds_sum.to(dtype)
+
     def _forward_talker_single_segment(
         self,
         segment_hidden: torch.Tensor,
@@ -690,16 +718,18 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         unwrapped_code_predictor = self._get_unwrapped_code_predictor()
         predictor_embeds = unwrapped_code_predictor.get_input_embeddings()
 
-        # Sum embeddings from all layers in FP32 to prevent BF16 overflow
-        # BF16 has limited exponent range; summing 16 layers can overflow
-        all_layer_embeds_sum = layer0_embeddings.to(torch.float32).clone()
-        for j in range(len(predictor_embeds)):
-            layer_j_codes = target_codes[:, j + 1, :]
-            emb = predictor_embeds[j](layer_j_codes.to(self.device))
-            all_layer_embeds_sum = all_layer_embeds_sum + emb.to(torch.float32)
-
-        # Cast back to BF16 for talker forward pass
-        all_layer_embeds_sum = all_layer_embeds_sum.to(self.talker.dtype)
+        # Sum embeddings from all layers with checkpointing to prevent NaN gradients
+        # Checkpointing breaks the gradient chain through codec embeddings
+        all_layer_embeds_sum = checkpoint(
+            lambda: self._compute_codec_embeddings(
+                target_codes,
+                predictor_embeds,
+                layer0_embeddings,
+                self.device,
+                self.talker.dtype,
+            ),
+            use_reentrant=False,
+        )
 
         # Build codec input sequence (teacher forcing)
         trailing_len = trailing_text_hidden.shape[1]

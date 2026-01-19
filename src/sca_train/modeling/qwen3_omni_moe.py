@@ -123,10 +123,12 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
 
         # Project speaker embedding to talker hidden size
         # Use FP32 computation + checkpointing to prevent NaN gradients
-        def project_speaker():
-            return self.speaker_projection(speaker_embedding.to(torch.float32))
+        def project_speaker(x):
+            return self.speaker_projection(x.to(torch.float32))
 
-        projected_speaker = checkpoint(project_speaker, use_reentrant=False)
+        projected_speaker = checkpoint(
+            project_speaker, speaker_embedding, use_reentrant=False
+        )
 
         assistant_hidden = self.talker.text_projection(
             thinker_embed[:, im_start_index:segment_end_index]

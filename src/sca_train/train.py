@@ -203,6 +203,11 @@ def train(config: SCATrainingConfig):
         model.speaker_projection.requires_grad_(True)
         logger.debug(config, "Unfrozen speaker_projection for voice cloning")
 
+    # Freeze codec embeddings to prevent NaN gradients
+    if hasattr(model, "_freeze_codec_embeddings"):
+        model._freeze_codec_embeddings()
+        logger.debug(config, "Frozen codec embeddings (Mimi pretrained)")
+
     if hasattr(model, "mimi_model"):
         model.mimi_model.requires_grad_(False)
     if hasattr(model, "code2wav"):

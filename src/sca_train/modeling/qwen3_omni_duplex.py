@@ -17,7 +17,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
 from transformers import (
     AutoFeatureExtractor,
     MimiModel,
@@ -218,6 +217,37 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             )
 
         print("Mimi model loaded successfully!")
+
+    def _freeze_codec_embeddings(self) -> None:
+        """Freeze all codec embeddings to prevent NaN gradients.
+
+        Talker and MTP use Mimi codec embeddings as input features.
+        These are pretrained from Mimi and should not be trained to avoid
+        numerical instability that causes NaN in backward pass.
+        """
+        if self.talker is None:
+            return
+
+        frozen_count = 0
+
+        if hasattr(self.talker, "get_input_embeddings"):
+            talker_embeds = self.talker.get_input_embeddings()
+            if hasattr(talker_embeds, "weight") and talker_embeds.weight.requires_grad:
+                talker_embeds.weight.requires_grad_(False)
+                frozen_count += 1
+
+        unwrapped_predictor = self._get_unwrapped_code_predictor()
+        if unwrapped_predictor is not None and hasattr(
+            unwrapped_predictor, "get_input_embeddings"
+        ):
+            mtp_embeds = unwrapped_predictor.get_input_embeddings()
+            if hasattr(mtp_embeds, "__iter__"):
+                for embed in mtp_embeds:
+                    if hasattr(embed, "weight") and embed.weight.requires_grad:
+                        embed.weight.requires_grad_(False)
+                        frozen_count += 1
+
+        print(f"Froze {frozen_count} codec embedding layers")
 
     def _get_unwrapped_code_predictor(self):
         """Get code_predictor unwrapped from PEFT wrapper if present."""
@@ -650,7 +680,7 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         device: torch.device,
         dtype: torch.dtype,
     ) -> torch.Tensor:
-        """Compute codec embeddings for checkpointing - breaks gradient chain.
+        """Compute codec embeddings for teacher forcing.
 
         Args:
             target_codes: [1, 16, num_frames] - Target Mimi codes.
@@ -718,17 +748,13 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         unwrapped_code_predictor = self._get_unwrapped_code_predictor()
         predictor_embeds = unwrapped_code_predictor.get_input_embeddings()
 
-        # Sum embeddings from all layers with checkpointing to prevent NaN gradients
-        # Checkpointing breaks the gradient chain through codec embeddings
-        all_layer_embeds_sum = checkpoint(
-            lambda: self._compute_codec_embeddings(
-                target_codes,
-                predictor_embeds,
-                layer0_embeddings,
-                self.device,
-                self.talker.dtype,
-            ),
-            use_reentrant=False,
+        # Sum embeddings from all layers (codec embeddings are frozen to prevent NaN gradients)
+        all_layer_embeds_sum = self._compute_codec_embeddings(
+            target_codes,
+            predictor_embeds,
+            layer0_embeddings,
+            self.device,
+            self.talker.dtype,
         )
 
         # Build codec input sequence (teacher forcing)

@@ -696,11 +696,25 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             self.talker.device
         )
 
-        # Replace speaker position with projected speaker embedding
+        if self.training and getattr(self, "_debug_step_count", 0) < 5:
+            # Diagnostic for speaker embedding
+            spk_norm = torch.norm(speaker_embedding.float(), dim=-1)
+            print(
+                f"[DIAG] Speaker Embedding: shape={speaker_embedding.shape}, "
+                f"dtype={speaker_embedding.dtype}, "
+                f"min={speaker_embedding.min()}, max={speaker_embedding.max()}, "
+                f"mean={speaker_embedding.float().mean()}, std={speaker_embedding.float().std()}, "
+                f"avg_norm={spk_norm.mean()}, max_norm={spk_norm.max()}"
+            )
+
+        # Normalize speaker embedding to unit length for stability
         # Use FP32 computation for numerical stability (no checkpointing needed for small layer)
-        projected_speaker = self.speaker_projection(
-            speaker_embedding.to(torch.float32)
-        ).to(codec_embeds_raw.dtype)
+        speaker_embedding_norm = torch.nn.functional.normalize(
+            speaker_embedding.to(torch.float32), p=2, dim=-1
+        )
+        projected_speaker = self.speaker_projection(speaker_embedding_norm).to(
+            codec_embeds_raw.dtype
+        )
         codec_embeds = torch.cat(
             [
                 codec_embeds_raw[:, :3, :],  # nothink, think_bos, think_eos
@@ -825,26 +839,26 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         )
 
         # Build codec input sequence (teacher forcing)
+        # Sequence: [Code0+Text1, Code1+Text2, ..., Code(N-1)+Text(N)]
+        # Predicts: [Code1,       Code2,       ..., EOS]
         trailing_len = trailing_text_hidden.shape[1]
         codec_input_embeds_list = []
 
         for pos in range(num_codec_tokens):
-            if pos == 0:
-                pos_embed = all_layer_embeds_sum[:, pos : pos + 1, :]
-                codec_input_embeds_list.append(pos_embed)
-                continue
-            prev_pos = pos - 1
-            if prev_pos < trailing_len:
-                text_hidden = trailing_text_hidden[:, prev_pos : prev_pos + 1, :]
+            # Audio part: Code[pos]
+            audio_embed = all_layer_embeds_sum[:, pos : pos + 1, :]
+
+            # Text part: Text[pos+1] (since trailing starts at Text1)
+            # Use trailing_text_hidden[pos]
+            if pos < trailing_len:
+                text_hidden = trailing_text_hidden[:, pos : pos + 1, :]
             else:
                 text_hidden = tts_pad_embed
-            pos_embed = (
-                all_layer_embeds_sum[:, prev_pos : prev_pos + 1, :] + text_hidden
-            )
-            codec_input_embeds_list.append(pos_embed)
 
-        # EOS token - replace last loop position with EOS embed
-        codec_input_embeds_list[-1] = trailing_text_hidden[:, -1:, :]
+            # Combine
+            # Logic: Code[k] + Text[k+1] -> predicts Code[k+1]
+            pos_embed = audio_embed + text_hidden
+            codec_input_embeds_list.append(pos_embed)
 
         if codec_input_embeds_list:
             codec_input_embeds = torch.cat(codec_input_embeds_list, dim=1).to(

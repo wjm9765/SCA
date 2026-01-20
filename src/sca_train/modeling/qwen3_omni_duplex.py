@@ -728,6 +728,9 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         # === DIAG: Check projected speaker stats ===
         if self._debug_step_count <= 3:
+            print(
+                f"[DIAG] speaker_projection weight std: {self.speaker_projection.weight.std().item()}"
+            )
             with torch.no_grad():
                 p_min = projected_speaker.min().item()
                 p_max = projected_speaker.max().item()

@@ -1044,6 +1044,25 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 f"[DIAG][Rank {local_rank}][Step {step_num}]   all_layer_embeds_sum range: [{all_layer_embeds_sum_check.min():.4f}, {all_layer_embeds_sum_check.max():.4f}]"
             )
 
+        # DIAG: Hook for input gradients to detect BPTT instability
+        if full_inputs_embeds.requires_grad:
+
+            def _input_grad_hook(grad):
+                if torch.isnan(grad).any() or torch.isinf(grad).any():
+                    print(
+                        "[INPUT-GRAD] *** WARNING: NaN detected in full_inputs_embeds! ***"
+                    )
+                    # Check if first token (speaker) is the only one broken
+                    # Prefix length is 9 (1 speaker + 8 text)
+                    prefix_grad = grad[:, :9, :]
+                    rest_grad = grad[:, 9:, :]
+                    print(
+                        f"[INPUT-GRAD] Prefix grad NaN: {torch.isnan(prefix_grad).any()}"
+                    )
+                    print(f"[INPUT-GRAD] Rest grad NaN: {torch.isnan(rest_grad).any()}")
+
+            full_inputs_embeds.register_hook(_input_grad_hook)
+
         # Forward through Talker
         talker_outputs = self.talker(
             inputs_embeds=full_inputs_embeds,
@@ -1521,7 +1540,8 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         # 7. Combine losses
         mtp_weight = getattr(self.config, "mtp_weight", 2.0)
-        total_loss = thinker_loss + avg_talker_loss + (mtp_weight * avg_mtp_loss)
+        # NOTE: Temporarily disabling MTP to isolate NaN source
+        total_loss = thinker_loss + avg_talker_loss + (0.0 * avg_mtp_loss)
 
         # === DEBUG LOGGING: Final combined loss ===
         if step_num <= 3:

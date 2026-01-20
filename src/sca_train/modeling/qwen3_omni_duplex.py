@@ -767,14 +767,31 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                     has_inf = torch.isinf(grad).any()
 
                     if has_nan or has_inf:
-                        # Only log the error occasionally to avoid spamming
-                        if step_hook <= 5 or step_hook % 10 == 0:
-                            print(
-                                f"[SPEAKER-GRAD][Rank {local_rank_hook}][Step {step_hook}] "
-                                f"*** WARNING: NaN/Inf detected in gradient! Replacing with zeros. ***"
-                            )
-                        # Replace with zeros to save the weights
-                        return torch.zeros_like(grad)
+                        msg_parts = []
+                        if has_nan:
+                            msg_parts.append("NaN")
+                        if has_inf:
+                            msg_parts.append("Inf")
+
+                        # Get max finite value for context
+                        finite_mask = torch.isfinite(grad)
+                        if finite_mask.any():
+                            max_val = grad[finite_mask].abs().max().item()
+                        else:
+                            max_val = -1.0
+
+                        print(
+                            f"[SPEAKER-GRAD][Rank {local_rank_hook}][Step {step_hook}] *** WARNING: {'/'.join(msg_parts)} detected in gradient! Max finite val: {max_val} ***"
+                        )
+
+                        # Sanitize
+                        grad = torch.where(
+                            torch.isnan(grad), torch.zeros_like(grad), grad
+                        )
+                        grad = torch.where(
+                            torch.isinf(grad), torch.zeros_like(grad), grad
+                        )
+                        # The clamping logic below will handle the return
 
                     # Optional: Clamp extremely large gradients
                     # If norm is exploding > 5.0, scale it down

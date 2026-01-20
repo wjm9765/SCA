@@ -901,6 +901,9 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         config = self.config
 
+        # Detach segment hidden to isolate Talker gradients
+        segment_hidden = segment_hidden.detach()
+
         # Build prefix
         prefix_embed, trailing_text_hidden, tts_pad_embed = (
             self._build_duplex_talker_prefix(segment_hidden, speaker_embedding)
@@ -1064,10 +1067,11 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             full_inputs_embeds.register_hook(_input_grad_hook)
 
         # Forward through Talker
+        # NOTE: We skip internal loss computation (labels=None) to inspect logits first
         talker_outputs = self.talker(
             inputs_embeds=full_inputs_embeds,
             attention_mask=attention_mask,
-            labels=labels,
+            labels=None,
             trailing_text_hidden=trailing_text_hidden,
             tts_pad_embed=tts_pad_embed,
             talker_input_ids=None,
@@ -1077,7 +1081,35 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             video_second_per_grid=None,
             output_hidden_states=True,
         )
-        talker_loss = talker_outputs.loss
+
+        logits = talker_outputs.logits
+
+        # === DIAG: Check logits before loss ===
+        step_num = self._debug_step_count
+        if step_num <= 3:
+            local_rank = (
+                torch.distributed.get_rank()
+                if torch.distributed.is_initialized()
+                else 0
+            )
+            l_min = logits.min().item()
+            l_max = logits.max().item()
+            l_mean = logits.mean().item()
+            l_nan = torch.isnan(logits).any().item()
+            print(f"[DIAG][Rank {local_rank}][Step {step_num}] Talker Logits Stats:")
+            print(
+                f"  Range: [{l_min:.4f}, {l_max:.4f}], Mean: {l_mean:.4f}, Has NaN: {l_nan}"
+            )
+
+        # Compute loss manually
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+
+        talker_loss = F.cross_entropy(
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1),
+            ignore_index=-100,
+        )
 
         # === DEBUG LOGGING: Check talker_loss ===
         step_num = self._debug_step_count

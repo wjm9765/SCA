@@ -439,16 +439,17 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
     def _extract_segment_hidden_states(
         self,
-        input_embeddings: torch.Tensor,
+        hidden_states: torch.Tensor,
         segment_info: list[list[SegmentInfo]],
     ) -> tuple[list[torch.Tensor], list[int], list[int]]:
         """Extract hidden states for speaking segments.
 
-        For duplex training, we use the input embeddings (hidden_states[0])
-        rather than deep hidden states, as per the architecture design.
+        For duplex training, we use hidden_states[accept_layer] which has
+        gradients flowing through LoRA adapters. Using hidden_states[0]
+        (frozen embedding layer) caused gradient explosion in speaker_projection.
 
         Args:
-            input_embeddings: [batch, seq_len, hidden_dim] from hidden_states[0].
+            hidden_states: [batch, seq_len, hidden_dim] from hidden_states[accept_layer].
             segment_info: Per-sample list of SegmentInfo.
 
         Returns:
@@ -458,10 +459,10 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 - seg_to_batch: List mapping segment to batch index.
         """
         # Validate inputs
-        assert input_embeddings.ndim == 3, (
-            f"_extract_segment_hidden_states: input_embeddings expected 3D, got {input_embeddings.ndim}D"
+        assert hidden_states.ndim == 3, (
+            f"_extract_segment_hidden_states: hidden_states expected 3D, got {hidden_states.ndim}D"
         )
-        batch_size, seq_len, hidden_dim = input_embeddings.shape
+        batch_size, seq_len, hidden_dim = hidden_states.shape
         assert len(segment_info) == batch_size, (
             f"_extract_segment_hidden_states: segment_info length {len(segment_info)} != batch_size {batch_size}"
         )
@@ -483,9 +484,9 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                         f"_extract_segment_hidden_states: batch[{batch_idx}].segment[{seg_idx}].text_token_idxs[{idx_pos}] = {idx_val} out of bounds [0, {seq_len})"
                     )
 
-                # Get embeddings at segment positions
+                # Get hidden states at segment positions
                 # idxs is a list of indices into the sequence
-                seg_emb = input_embeddings[batch_idx, idxs, :]  # [seg_len, hidden_dim]
+                seg_emb = hidden_states[batch_idx, idxs, :]  # [seg_len, hidden_dim]
                 seg_emb = seg_emb.unsqueeze(0)  # [1, seg_len, hidden_dim]
 
                 assert seg_emb.shape == (1, len(idxs), hidden_dim), (
@@ -708,13 +709,15 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             )
 
         # Normalize speaker embedding to unit length for stability
-        # Use FP32 computation for numerical stability (no checkpointing needed for small layer)
+        # Use FP32 computation for numerical stability
         speaker_embedding_norm = torch.nn.functional.normalize(
             speaker_embedding.to(torch.float32), p=2, dim=-1
         )
-        projected_speaker = self.speaker_projection(speaker_embedding_norm).to(
-            codec_embeds_raw.dtype
-        )
+
+        # Project speaker embedding to talker hidden size
+        # Keep computation in FP32 for stability, then cast to bf16
+        projected_speaker = self.speaker_projection(speaker_embedding_norm)
+        projected_speaker = projected_speaker.to(codec_embeds_raw.dtype)
         codec_embeds = torch.cat(
             [
                 codec_embeds_raw[:, :3, :],  # nothink, think_bos, think_eos
@@ -1381,14 +1384,22 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                     f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: Thinker loss is NaN/Inf! ***"
                 )
 
-        # 2. Extract segment hidden states (from hidden_states[0] = input embeddings)
-        input_embeddings = thinker_outputs.hidden_states[0]  # [batch, seq_len, hidden]
-        assert input_embeddings.shape[0] == batch_size, (
-            f"forward: input_embeddings batch {input_embeddings.shape[0]} != expected {batch_size}"
+        # 2. Extract segment hidden states from accept_hidden_layer
+        # CRITICAL: We use hidden_states[accept_layer] NOT hidden_states[0]!
+        # hidden_states[0] is the frozen embedding layer output (no gradients).
+        # hidden_states[accept_layer] is a deep transformer layer with LoRA gradients.
+        # Using hidden_states[0] caused all Talker gradients to flow ONLY through
+        # speaker_projection, causing gradient explosion and NaN.
+        accept_layer = self.config.talker_config.accept_hidden_layer
+        segment_hidden_states = thinker_outputs.hidden_states[
+            accept_layer
+        ]  # [batch, seq_len, hidden]
+        assert segment_hidden_states.shape[0] == batch_size, (
+            f"forward: segment_hidden_states batch {segment_hidden_states.shape[0]} != expected {batch_size}"
         )
 
         segment_hidden_list, segment_lengths, seg_to_batch = (
-            self._extract_segment_hidden_states(input_embeddings, segment_info)
+            self._extract_segment_hidden_states(segment_hidden_states, segment_info)
         )
 
         # 3. If no segments, return thinker loss only

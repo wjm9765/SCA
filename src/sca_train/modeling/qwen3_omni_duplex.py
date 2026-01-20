@@ -710,17 +710,41 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         # Normalize speaker embedding to unit length for stability
         # Use FP32 computation for numerical stability
-        speaker_embedding_norm = torch.nn.functional.normalize(
-            speaker_embedding.to(torch.float32), p=2, dim=-1
-        )
+        # 2.2 Project speaker embedding
+        # Cast to float32 for stability during projection
+        speaker_feat = speaker_embedding.to(dtype=torch.float32)
 
-        # Project speaker embedding to talker hidden size
-        # Keep computation in FP32 for stability, then cast to bf16
-        projected_speaker = self.speaker_projection(speaker_embedding_norm)
+        # Normalize to unit length to prevent magnitude explosion
+        curr_norm = speaker_feat.norm(p=2, dim=-1, keepdim=True)
+        speaker_feat = speaker_feat / (curr_norm + 1e-6)
 
-        # === GRADIENT HOOK: Sanitize gradient at projected_speaker output ===
-        # This acts as a firewall: if Talker backward produces NaN/Inf,
-        # we zero it out to prevent corrupting the speaker_projection weights.
+        # Project
+        projected_speaker = self.speaker_projection(speaker_feat)  # [batch, hidden]
+
+        # === DIAG: Check projected speaker stats ===
+        if self._debug_step_count <= 3:
+            with torch.no_grad():
+                p_min = projected_speaker.min().item()
+                p_max = projected_speaker.max().item()
+                p_mean = projected_speaker.mean().item()
+                p_std = projected_speaker.std().item()
+
+                # Check segment hidden stats too (need to find where it is computed? It's later)
+                # Just print speaker for now
+                if torch.distributed.get_rank() == 0:
+                    print(
+                        f"[DIAG][Step {self._debug_step_count}] Projected Speaker Stats:"
+                    )
+                    print(
+                        f"  Min: {p_min:.4f}, Max: {p_max:.4f}, Mean: {p_mean:.4f}, Std: {p_std:.4f}"
+                    )
+        # ============================================
+
+        # Cast back to talker dtype
+        projected_speaker = projected_speaker.to(self.talker.dtype)
+
+        # Sanitization Hook (Active Firewall)
+        # Keeps the speaker projection weights safe from NaNs
         if projected_speaker.requires_grad:
             local_rank_hook = (
                 torch.distributed.get_rank()

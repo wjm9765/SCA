@@ -843,16 +843,8 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             )
             codec_input_embeds_list.append(pos_embed)
 
-        # EOS token
-        last_pos = num_codec_tokens - 1
-        if last_pos < trailing_len:
-            eos_text_hidden = trailing_text_hidden[:, last_pos : last_pos + 1, :]
-        else:
-            eos_text_hidden = tts_pad_embed
-        eos_input_embed = (
-            all_layer_embeds_sum[:, last_pos : last_pos + 1, :] + eos_text_hidden
-        )
-        codec_input_embeds_list.append(eos_input_embed)
+        # EOS token - replace last loop position with EOS embed
+        codec_input_embeds_list[-1] = trailing_text_hidden[:, -1:, :]
 
         if codec_input_embeds_list:
             codec_input_embeds = torch.cat(codec_input_embeds_list, dim=1).to(

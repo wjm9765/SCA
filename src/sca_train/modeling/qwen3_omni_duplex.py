@@ -902,7 +902,7 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         config = self.config
 
         # Detach segment hidden to isolate Talker gradients
-        segment_hidden = segment_hidden.detach()
+        # segment_hidden = segment_hidden.detach()  <-- REMOVED
 
         # Build prefix
         prefix_embed, trailing_text_hidden, tts_pad_embed = (
@@ -963,22 +963,38 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         else:
             full_inputs_embeds = prefix_embed
 
+        # FIX: Append EOS input embedding to allow Code(N-1) -> EOS prediction
+        # Get EOS embedding
+        codec_eos_id = config.talker_config.codec_eos_token_id
+        eos_token = torch.tensor([[codec_eos_id]], device=self.device, dtype=torch.long)
+        eos_embed_raw = self.talker.get_input_embeddings()(eos_token)
+
+        # Combine with TTS pad
+        eos_input_embed = eos_embed_raw + tts_pad_embed
+
+        # Append to inputs
+        full_inputs_embeds = torch.cat(
+            [full_inputs_embeds, eos_input_embed.to(self.talker.dtype)], dim=1
+        )
+
         # Build labels
         prefix_len = prefix_embed.shape[1]
-        codec_eos_id = config.talker_config.codec_eos_token_id
 
-        # Labels: -100 for prefix[:-1], code[0] at prefix[-1], code[1:] + EOS for rest
+        # FIX: Mask length should be prefix_len (9) to align Input[8](BOS) -> Code0
+        # Previously len-1 (8) caused Input[8] -> Code1
         prefix_mask = torch.full(
-            (1, prefix_len - 1), -100, dtype=torch.long, device=self.device
+            (1, prefix_len), -100, dtype=torch.long, device=self.device
         )
         label_code0 = layer0_codes[:, 0:1]
         label_code_rest = layer0_codes[:, 1:]
         label_eos = torch.full(
             (1, 1), codec_eos_id, dtype=torch.long, device=self.device
         )
+        # FIX: Add dummy label for the EOS input step
+        label_dummy = torch.full((1, 1), -100, dtype=torch.long, device=self.device)
 
         labels = torch.cat(
-            [prefix_mask, label_code0, label_code_rest, label_eos], dim=1
+            [prefix_mask, label_code0, label_code_rest, label_eos, label_dummy], dim=1
         )
 
         # Validate labels length matches inputs
@@ -1104,6 +1120,24 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         # Compute loss manually
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
+
+        # DIAG: Hook for logits gradient
+        if shift_logits.requires_grad:
+
+            def _logits_grad_hook(grad):
+                if torch.isnan(grad).any() or torch.isinf(grad).any():
+                    print("[TALKER-LOGITS-GRAD] *** WARNING: NaN detected! ***")
+                    grad_max = (
+                        grad[torch.isfinite(grad)].abs().max().item()
+                        if torch.isfinite(grad).any()
+                        else -1.0
+                    )
+                    print(f"[TALKER-LOGITS-GRAD] Max finite grad: {grad_max}")
+                else:
+                    # Optional: print healthy grad stats occasionally? No, keep it quiet if healthy
+                    pass
+
+            shift_logits.register_hook(_logits_grad_hook)
 
         talker_loss = F.cross_entropy(
             shift_logits.view(-1, shift_logits.size(-1)),
@@ -1572,8 +1606,7 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         # 7. Combine losses
         mtp_weight = getattr(self.config, "mtp_weight", 2.0)
-        # NOTE: Temporarily disabling MTP to isolate NaN source
-        total_loss = thinker_loss + avg_talker_loss + (0.0 * avg_mtp_loss)
+        total_loss = thinker_loss + avg_talker_loss + (mtp_weight * avg_mtp_loss)
 
         # === DEBUG LOGGING: Final combined loss ===
         if step_num <= 3:

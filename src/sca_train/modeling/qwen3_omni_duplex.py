@@ -163,12 +163,7 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         speaker_embed_dim = 192
         talker_hidden_size = self.config.talker_config.text_config.hidden_size
         self.speaker_projection = nn.Linear(speaker_embed_dim, talker_hidden_size)
-        # Correct initialization for normalized inputs:
-        # Input has norm=1 -> var = 1/192.
-        # Output needs var=1.
-        # Var(out) = n_in * Var(w) * Var(in) = 192 * Var(w) * (1/192) = Var(w).
-        # So we need Var(w) = 1.0 -> std(w) = 1.0.
-        nn.init.normal_(self.speaker_projection.weight, mean=0.0, std=1.0)
+        nn.init.xavier_uniform_(self.speaker_projection.weight)
         if self.speaker_projection.bias is not None:
             nn.init.zeros_(self.speaker_projection.bias)
 
@@ -726,11 +721,15 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         # Project
         projected_speaker = self.speaker_projection(speaker_feat)  # [batch, hidden]
 
+        # SCALE CORRECTION (LINEAR):
+        # Input weights are tiny (Std ~ 0.02) likely due to reset.
+        # Output is tiny (~0.02) compared to needed ~1.0.
+        # We multiply by 50.0 to bring it to unit variance range.
+        # We use a constant scalar to avoid "d(1/|x|)" instability.
+        projected_speaker = projected_speaker * 50.0
+
         # === DIAG: Check projected speaker stats ===
         if self._debug_step_count <= 3:
-            print(
-                f"[DIAG] speaker_projection weight std: {self.speaker_projection.weight.std().item()}"
-            )
             with torch.no_grad():
                 p_min = projected_speaker.min().item()
                 p_max = projected_speaker.max().item()

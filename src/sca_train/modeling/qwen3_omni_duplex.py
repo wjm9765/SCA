@@ -163,7 +163,12 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         speaker_embed_dim = 192
         talker_hidden_size = self.config.talker_config.text_config.hidden_size
         self.speaker_projection = nn.Linear(speaker_embed_dim, talker_hidden_size)
-        nn.init.xavier_uniform_(self.speaker_projection.weight)
+        # Correct initialization for normalized inputs:
+        # Input has norm=1 -> var = 1/192.
+        # Output needs var=1.
+        # Var(out) = n_in * Var(w) * Var(in) = 192 * Var(w) * (1/192) = Var(w).
+        # So we need Var(w) = 1.0 -> std(w) = 1.0.
+        nn.init.normal_(self.speaker_projection.weight, mean=0.0, std=1.0)
         if self.speaker_projection.bias is not None:
             nn.init.zeros_(self.speaker_projection.bias)
 
@@ -720,15 +725,6 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         # Project
         projected_speaker = self.speaker_projection(speaker_feat)  # [batch, hidden]
-
-        # SCALE CORRECTION: The projected speaker is too small (~0.02) compared to others (~1.0).
-        # We normalize it to unit vector and then scale by sqrt(hidden_dim) which is standard for embeddings.
-        # hidden=1024 -> sqrt(1024)=32.
-        # This prevents it from being drowned out or causing gradient issues due to tiny scale.
-        projected_speaker = torch.nn.functional.normalize(
-            projected_speaker, p=2, dim=-1
-        )
-        projected_speaker = projected_speaker * (projected_speaker.shape[-1] ** 0.5)
 
         # === DIAG: Check projected speaker stats ===
         if self._debug_step_count <= 3:

@@ -728,7 +728,7 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         projected_speaker = torch.nn.functional.normalize(
             projected_speaker, p=2, dim=-1
         )
-        projected_speaker = projected_speaker * (self.talker.config.hidden_size**0.5)
+        projected_speaker = projected_speaker * (projected_speaker.shape[-1] ** 0.5)
 
         # === DIAG: Check projected speaker stats ===
         if self._debug_step_count <= 3:

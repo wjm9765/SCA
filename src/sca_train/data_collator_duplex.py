@@ -236,8 +236,12 @@ class FullDuplexCollator:
 
         # 2. Calculate expected audio token counts per sample
         # This uses the same formula as Qwen3-Omni's audio encoder
+        # TEMP: Fixed token count function as requested
+        def _get_temp_fixed_token_count(input_lengths: int) -> int:
+            return 4
+
         audio_token_counts = [
-            _get_feat_extract_output_lengths(mel_len) for mel_len in mel_lengths
+            _get_temp_fixed_token_count(mel_len) for mel_len in mel_lengths
         ]
 
         # DEBUG: Print mel lengths and audio token counts

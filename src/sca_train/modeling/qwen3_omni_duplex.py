@@ -1114,18 +1114,6 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
 
         return talker_loss, mtp_loss
 
-    def _diag_check_speaker_grad(
-        self, stage_name: str, step_num: int, local_rank: int
-    ) -> None:
-        """Diagnostic helper to check for NaN gradients in speaker projection."""
-        for name, param in self.speaker_projection.named_parameters():
-            if param.grad is not None:
-                has_nan = torch.isnan(param.grad).any().item()
-                if has_nan:
-                    print(
-                        f"[DIAG][Rank {local_rank}][Step {step_num}] *** NaN detected in speaker_projection ({name}) after {stage_name} backward! ***"
-                    )
-
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -1516,34 +1504,24 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                     f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: Total loss is NaN/Inf! ***"
                 )
 
-            # === DIAGNOSTICS: Split Backward to Isolate NaN Source ===
-            # Run backward individually and check speaker gradient to find the culprit
+                # Check individual components
+                if torch.isnan(thinker_loss).item() or torch.isinf(thinker_loss).item():
+                    print(
+                        f"[DIAG][Rank {local_rank}][Step {step_num}]   !!! Thinker Loss is NaN/Inf !!!"
+                    )
 
-            # 1. Thinker Backward
-            if thinker_loss.requires_grad:
-                thinker_loss.backward(retain_graph=True)
-                self._diag_check_speaker_grad("Thinker", step_num, local_rank)
+                if (
+                    torch.isnan(avg_talker_loss).item()
+                    or torch.isinf(avg_talker_loss).item()
+                ):
+                    print(
+                        f"[DIAG][Rank {local_rank}][Step {step_num}]   !!! Talker Loss is NaN/Inf !!!"
+                    )
 
-            # 2. Talker Backward
-            if avg_talker_loss.requires_grad:
-                avg_talker_loss.backward(retain_graph=True)
-                self._diag_check_speaker_grad("Talker", step_num, local_rank)
-
-            # 3. MTP Backward
-            if avg_mtp_loss.requires_grad:
-                # Scale by weight
-                (mtp_weight * avg_mtp_loss).backward()
-                self._diag_check_speaker_grad("MTP", step_num, local_rank)
-
-            # Return dummy loss with no grad attached (since we already did backward)
-            # This prevents the Trainer from calling backward again
-            return CausalLMOutputWithPast(
-                loss=torch.tensor(0.0, device=self.device, requires_grad=True),  # type: ignore
-                logits=None,
-                past_key_values=None,
-                hidden_states=None,
-                attentions=None,
-            )
+                if torch.isnan(avg_mtp_loss).item() or torch.isinf(avg_mtp_loss).item():
+                    print(
+                        f"[DIAG][Rank {local_rank}][Step {step_num}]   !!! MTP Loss is NaN/Inf !!!"
+                    )
 
         # Store for logging
         self._last_thinker_loss = thinker_loss.detach()

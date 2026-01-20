@@ -714,12 +714,21 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         # Cast to float32 for stability during projection
         speaker_feat = speaker_embedding.to(dtype=torch.float32)
 
-        # Normalize to unit length to prevent magnitude explosion
+        # Normalize to unit length before projection (standard practice for ECAPA embeddings)
         curr_norm = speaker_feat.norm(p=2, dim=-1, keepdim=True)
         speaker_feat = speaker_feat / (curr_norm + 1e-6)
 
         # Project
         projected_speaker = self.speaker_projection(speaker_feat)  # [batch, hidden]
+
+        # SCALE CORRECTION: The projected speaker is too small (~0.02) compared to others (~1.0).
+        # We normalize it to unit vector and then scale by sqrt(hidden_dim) which is standard for embeddings.
+        # hidden=1024 -> sqrt(1024)=32.
+        # This prevents it from being drowned out or causing gradient issues due to tiny scale.
+        projected_speaker = torch.nn.functional.normalize(
+            projected_speaker, p=2, dim=-1
+        )
+        projected_speaker = projected_speaker * (self.talker.config.hidden_size**0.5)
 
         # === DIAG: Check projected speaker stats ===
         if self._debug_step_count <= 3:

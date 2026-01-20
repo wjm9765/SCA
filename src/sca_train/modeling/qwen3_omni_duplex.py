@@ -717,6 +717,40 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         # Project speaker embedding to talker hidden size
         # Keep computation in FP32 for stability, then cast to bf16
         projected_speaker = self.speaker_projection(speaker_embedding_norm)
+
+        # === GRADIENT HOOK: Monitor gradient at projected_speaker output ===
+        # This helps identify if NaN is introduced in Talker backward
+        if self._debug_step_count <= 3 and projected_speaker.requires_grad:
+            local_rank_hook = (
+                torch.distributed.get_rank()
+                if torch.distributed.is_initialized()
+                else 0
+            )
+            step_hook = self._debug_step_count
+
+            def speaker_grad_hook(grad):
+                if grad is not None:
+                    has_nan = torch.isnan(grad).any().item()
+                    has_inf = torch.isinf(grad).any().item()
+                    grad_f32 = grad.float()
+                    print(
+                        f"[SPEAKER-GRAD][Rank {local_rank_hook}][Step {step_hook}] "
+                        f"Gradient at projected_speaker output:"
+                    )
+                    print(
+                        f"[SPEAKER-GRAD][Rank {local_rank_hook}][Step {step_hook}]   "
+                        f"Has NaN: {has_nan}, Has Inf: {has_inf}"
+                    )
+                    if not has_nan and not has_inf:
+                        print(
+                            f"[SPEAKER-GRAD][Rank {local_rank_hook}][Step {step_hook}]   "
+                            f"Range: [{grad_f32.min():.6f}, {grad_f32.max():.6f}], "
+                            f"Norm: {torch.norm(grad_f32):.6f}"
+                        )
+                return grad
+
+            projected_speaker.register_hook(speaker_grad_hook)
+
         projected_speaker = projected_speaker.to(codec_embeds_raw.dtype)
         codec_embeds = torch.cat(
             [
@@ -1384,22 +1418,19 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                     f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: Thinker loss is NaN/Inf! ***"
                 )
 
-        # 2. Extract segment hidden states from accept_hidden_layer
-        # CRITICAL: We use hidden_states[accept_layer] NOT hidden_states[0]!
-        # hidden_states[0] is the frozen embedding layer output (no gradients).
-        # hidden_states[accept_layer] is a deep transformer layer with LoRA gradients.
-        # Using hidden_states[0] caused all Talker gradients to flow ONLY through
-        # speaker_projection, causing gradient explosion and NaN.
-        accept_layer = self.config.talker_config.accept_hidden_layer
-        segment_hidden_states = thinker_outputs.hidden_states[
-            accept_layer
-        ]  # [batch, seq_len, hidden]
-        assert segment_hidden_states.shape[0] == batch_size, (
-            f"forward: segment_hidden_states batch {segment_hidden_states.shape[0]} != expected {batch_size}"
+        # 2. Extract segment hidden states from hidden_states[0] (input embeddings)
+        # NOTE: We use hidden_states[0] NOT hidden_states[accept_layer]!
+        # text_projection in Talker is designed for embedding layer outputs.
+        # Using accept_layer caused magnitude mismatch and NaN propagation.
+        # The official HuggingFace implementation also uses hidden_states[0]
+        # for text_projection (see _get_talker_assistant_parts).
+        input_embeddings = thinker_outputs.hidden_states[0]  # [batch, seq_len, hidden]
+        assert input_embeddings.shape[0] == batch_size, (
+            f"forward: input_embeddings batch {input_embeddings.shape[0]} != expected {batch_size}"
         )
 
         segment_hidden_list, segment_lengths, seg_to_batch = (
-            self._extract_segment_hidden_states(segment_hidden_states, segment_info)
+            self._extract_segment_hidden_states(input_embeddings, segment_info)
         )
 
         # 3. If no segments, return thinker loss only

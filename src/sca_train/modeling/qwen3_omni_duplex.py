@@ -718,9 +718,10 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         # Keep computation in FP32 for stability, then cast to bf16
         projected_speaker = self.speaker_projection(speaker_embedding_norm)
 
-        # === GRADIENT HOOK: Monitor gradient at projected_speaker output ===
-        # This helps identify if NaN is introduced in Talker backward
-        if self._debug_step_count <= 3 and projected_speaker.requires_grad:
+        # === GRADIENT HOOK: Sanitize gradient at projected_speaker output ===
+        # This acts as a firewall: if Talker backward produces NaN/Inf,
+        # we zero it out to prevent corrupting the speaker_projection weights.
+        if projected_speaker.requires_grad:
             local_rank_hook = (
                 torch.distributed.get_rank()
                 if torch.distributed.is_initialized()
@@ -728,25 +729,31 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             )
             step_hook = self._debug_step_count
 
+            # Use a persistent hook that works beyond step 3 to keep training stable
+            # but only log extensively in early steps
             def speaker_grad_hook(grad):
                 if grad is not None:
-                    has_nan = torch.isnan(grad).any().item()
-                    has_inf = torch.isinf(grad).any().item()
-                    grad_f32 = grad.float()
-                    print(
-                        f"[SPEAKER-GRAD][Rank {local_rank_hook}][Step {step_hook}] "
-                        f"Gradient at projected_speaker output:"
-                    )
-                    print(
-                        f"[SPEAKER-GRAD][Rank {local_rank_hook}][Step {step_hook}]   "
-                        f"Has NaN: {has_nan}, Has Inf: {has_inf}"
-                    )
-                    if not has_nan and not has_inf:
-                        print(
-                            f"[SPEAKER-GRAD][Rank {local_rank_hook}][Step {step_hook}]   "
-                            f"Range: [{grad_f32.min():.6f}, {grad_f32.max():.6f}], "
-                            f"Norm: {torch.norm(grad_f32):.6f}"
-                        )
+                    # check for nan/inf
+                    has_nan = torch.isnan(grad).any()
+                    has_inf = torch.isinf(grad).any()
+
+                    if has_nan or has_inf:
+                        # Only log the error occasionally to avoid spamming
+                        if step_hook <= 5 or step_hook % 10 == 0:
+                            print(
+                                f"[SPEAKER-GRAD][Rank {local_rank_hook}][Step {step_hook}] "
+                                f"*** WARNING: NaN/Inf detected in gradient! Replacing with zeros. ***"
+                            )
+                        # Replace with zeros to save the weights
+                        return torch.zeros_like(grad)
+
+                    # Optional: Clamp extremely large gradients
+                    # If norm is exploding > 5.0, scale it down
+                    grad_norm = torch.norm(grad)
+                    if grad_norm > 5.0:
+                        scale = 5.0 / (grad_norm + 1e-6)
+                        return grad * scale
+
                 return grad
 
             projected_speaker.register_hook(speaker_grad_hook)
@@ -1105,22 +1112,19 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 else 0
             )
 
-            is_nan = torch.isnan(mtp_loss).item()
-            is_inf = torch.isinf(mtp_loss).item()
-            loss_val = mtp_loss.item() if not (is_nan or is_inf) else None
-
-            print(f"[DIAG][Rank {local_rank}][Step {step_num}] MTP loss:")
-            print(f"[DIAG][Rank {local_rank}][Step {step_num}]   Value: {loss_val}")
-            print(
-                f"[DIAG][Rank {local_rank}][Step {step_num}]   Is NaN: {is_nan}, Is Inf: {is_inf}"
-            )
-
-            if is_nan or is_inf:
-                print(
-                    f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: MTP loss is NaN/Inf! ***"
-                )
-
         return talker_loss, mtp_loss
+
+    def _diag_check_speaker_grad(
+        self, stage_name: str, step_num: int, local_rank: int
+    ) -> None:
+        """Diagnostic helper to check for NaN gradients in speaker projection."""
+        for name, param in self.speaker_projection.named_parameters():
+            if param.grad is not None:
+                has_nan = torch.isnan(param.grad).any().item()
+                if has_nan:
+                    print(
+                        f"[DIAG][Rank {local_rank}][Step {step_num}] *** NaN detected in speaker_projection ({name}) after {stage_name} backward! ***"
+                    )
 
     def forward(
         self,
@@ -1511,6 +1515,35 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                 print(
                     f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: Total loss is NaN/Inf! ***"
                 )
+
+            # === DIAGNOSTICS: Split Backward to Isolate NaN Source ===
+            # Run backward individually and check speaker gradient to find the culprit
+
+            # 1. Thinker Backward
+            if thinker_loss.requires_grad:
+                thinker_loss.backward(retain_graph=True)
+                self._diag_check_speaker_grad("Thinker", step_num, local_rank)
+
+            # 2. Talker Backward
+            if avg_talker_loss.requires_grad:
+                avg_talker_loss.backward(retain_graph=True)
+                self._diag_check_speaker_grad("Talker", step_num, local_rank)
+
+            # 3. MTP Backward
+            if avg_mtp_loss.requires_grad:
+                # Scale by weight
+                (mtp_weight * avg_mtp_loss).backward()
+                self._diag_check_speaker_grad("MTP", step_num, local_rank)
+
+            # Return dummy loss with no grad attached (since we already did backward)
+            # This prevents the Trainer from calling backward again
+            return CausalLMOutputWithPast(
+                loss=torch.tensor(0.0, device=self.device, requires_grad=True),  # type: ignore
+                logits=None,
+                past_key_values=None,
+                hidden_states=None,
+                attentions=None,
+            )
 
         # Store for logging
         self._last_thinker_loss = thinker_loss.detach()

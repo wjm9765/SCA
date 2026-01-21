@@ -990,11 +990,9 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         label_eos = torch.full(
             (1, 1), codec_eos_id, dtype=torch.long, device=self.device
         )
-        # FIX: Add dummy label for the EOS input step
-        label_dummy = torch.full((1, 1), -100, dtype=torch.long, device=self.device)
 
         labels = torch.cat(
-            [prefix_mask, label_code0, label_code_rest, label_eos, label_dummy], dim=1
+            [prefix_mask, label_code0, label_code_rest, label_eos], dim=1
         )
 
         # Validate labels length matches inputs

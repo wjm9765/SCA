@@ -1541,6 +1541,18 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
                     f"[DIAG][Rank {local_rank}][Step {step_num}]   *** ERROR: Thinker loss is NaN/Inf! ***"
                 )
 
+        # PERMANENT: Disable Talker, return Thinker loss only
+        self._last_thinker_loss = thinker_loss.detach()
+        self._last_talker_loss = torch.tensor(0.0, device=self.device)
+        self._last_mtp_loss = torch.tensor(0.0, device=self.device)
+        return CausalLMOutputWithPast(
+            loss=thinker_loss,
+            logits=None,
+            past_key_values=None,
+            hidden_states=None,
+            attentions=None,
+        )
+
         # 2. Extract segment hidden states from hidden_states[0] (input embeddings)
         # NOTE: We use hidden_states[0] NOT hidden_states[accept_layer]!
         # text_projection in Talker is designed for embedding layer outputs.

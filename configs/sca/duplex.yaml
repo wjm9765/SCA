@@ -42,7 +42,7 @@ training_args:
   warmup_ratio: 0.05
   num_train_epochs: 10
   max_steps: -1
-  learning_rate: 0.00001
+  learning_rate: 0.0001
   max_grad_norm: 1.0
   fp16: false
   bf16: true

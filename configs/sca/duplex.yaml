@@ -11,7 +11,7 @@ gradient_checkpointing: true  # Enable manual gradient checkpointing for Talker 
 attn_impl: "flash_attention_2"
 train_mtp: true
 mtp_weight: 2.0
-max_length: 32768
+max_length: 48000
 
 # Duplex-specific token IDs
 silence_token_id: 151646

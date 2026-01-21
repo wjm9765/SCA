@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-ACCELERATE_CONFIG="${SCRIPT_DIR}/../configs/accelerate/memory_efficient_4gpus.yaml"
+ACCELERATE_CONFIG="${SCRIPT_DIR}/../configs/accelerate/memory_efficient_2gpus.yaml"
 SCA_CONFIG="${SCRIPT_DIR}/../configs/sca/duplex.yaml"
 #export NCCL_P2P_DISABLE=1
 #export NCCL_IB_DISABLE=1

@@ -1546,7 +1546,7 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         self._last_talker_loss = torch.tensor(0.0, device=self.device)
         self._last_mtp_loss = torch.tensor(0.0, device=self.device)
         return CausalLMOutputWithPast(
-            loss=thinker_loss,
+            loss=thinker_loss,  # type: ignore[invalid-argument-type]
             logits=None,
             past_key_values=None,
             hidden_states=None,
@@ -1574,7 +1574,7 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
             self._last_talker_loss = torch.tensor(0.0, device=self.device)
             self._last_mtp_loss = torch.tensor(0.0, device=self.device)
             return CausalLMOutputWithPast(
-                loss=thinker_loss,  # type: ignore[arg-type]
+                loss=thinker_loss,
                 logits=None,  # Don't return logits - causes OOM when Accelerate converts to fp32
                 past_key_values=None,
                 hidden_states=None,
@@ -1672,7 +1672,7 @@ class Qwen3OmniDuplexModel(Qwen3OmniMoeForConditionalGeneration):
         self._last_mtp_loss = avg_mtp_loss.detach()
 
         return CausalLMOutputWithPast(
-            loss=total_loss,  # type: ignore[arg-type]
+            loss=total_loss,
             logits=None,  # Don't return logits - causes OOM when Accelerate converts to fp32
             past_key_values=None,
             hidden_states=None,

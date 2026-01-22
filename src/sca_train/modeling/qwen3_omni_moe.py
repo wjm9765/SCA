@@ -1277,7 +1277,7 @@ class Qwen3OmniMoeWithProperForward(Qwen3OmniMoeForConditionalGeneration):
                     )
                 else:
                     # Fallback to discrete speaker ID (original behavior)
-                    speaker_id = self.config.talker_config.speaker_id.get(  # type: ignore[union-attr]
+                    speaker_id = self.config.talker_config.speaker_id.get(
                         speaker.lower()
                     )
                     if speaker_id is None:

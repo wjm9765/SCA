@@ -120,3 +120,4 @@ dev = [
 [tool.ty.rules]
 # Ignore unresolved imports globally (e.g., liger-kernel only available on Linux)
 unresolved-import = "ignore"
+possibly-missing-attribute = "ignore"

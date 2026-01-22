@@ -12,12 +12,12 @@
 
 3. Run the following script to preload the dataset.
 ```bash
-./scripts/preload_dataset.py
+./scripts/preload_dataset.py # Use preload_duplex_dataset.py for full-duplex dataset
 ```
 
 4. Run the training script. You can modify the configuration file variables as needed.
 ```bash
-./scripts/train.py
+./scripts/train.sh # Use train_duplex.sh for full-duplex model training
 ```
 
 ### Configuration files
